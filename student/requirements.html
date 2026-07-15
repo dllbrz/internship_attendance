@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>My Requirements — Intern · Naic OJT</title>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../css/styles.css">
+</head>
+<body>
+<div class="app-shell" id="shell"><div style="padding:40px;text-align:center">Loading…</div></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../js/supabase-config.js"></script>
+<script src="../js/data.js"></script>
+<script src="../js/app.js"></script>
+<script>
+let CURRENT = null;
+async function render(){
+  const u = await requireStudent(); if(!u) return;
+  CURRENT = u;
+  const reqs = u.requirements || [];
+  document.getElementById('shell').innerHTML = renderSidebar('student','requirements') + `
+    <main class="main">
+      ${renderTopbar('My Requirements','Upload your OJT documents. You can select multiple files at once.')}
+
+      <div class="card">
+        <div class="card-title">Upload Documents</div>
+        <p class="text-muted text-sm">Accepted: PDF, DOC/DOCX, JPG, PNG. You can select multiple files in one go.</p>
+        <div class="form-group">
+          <label>Label (optional)</label>
+          <select id="label" class="form-control">
+            <option value="">— Select a document type —</option>
+            ${REQUIREMENT_TYPES.map(t=>`<option value="${t.label}">${t.label}</option>`).join('')}
+            <option value="Other">Other</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Select one or more files</label>
+          <input type="file" id="files" class="form-control" multiple accept=".pdf,.doc,.docx,.jpg,.jpeg,.png">
+        </div>
+        <button class="btn btn-primary" id="upBtn" onclick="doUpload()">Upload Files</button>
+        <div id="progress" style="margin-top:10px;font-size:13px;color:var(--gray-700)"></div>
+      </div>
+
+      <div class="card mt-4">
+        <div class="card-title">Uploaded Files (${reqs.length})</div>
+        ${reqs.length===0 ? '<p class="text-muted">No files uploaded yet.</p>' :
+          '<table class="table"><thead><tr><th></th><th>File</th><th>Label</th><th>Size</th><th>Uploaded</th><th></th></tr></thead><tbody>'+
+          reqs.map(r=>`<tr>
+            <td><span class="file-icon">${fileIcon()}</span></td>
+            <td>${r.name}</td>
+            <td>${r.label||'—'}</td>
+            <td>${humanSize(r.size)}</td>
+            <td>${fmtDate(r.uploaded_at)}</td>
+            <td>
+              <button class="btn btn-outline btn-sm" onclick="openFile('${r.path}')">View</button>
+              <button class="btn btn-outline btn-sm" style="color:#c53030;border-color:#c53030" onclick="delFile('${r.id}')">Delete</button>
+            </td></tr>`).join('')+
+          '</tbody></table>'}
+      </div>
+    </main>`;
+  startClock('#clockBox');
+}
+async function doUpload(){
+  const files = document.getElementById('files').files;
+  if(!files.length){ toast('Please pick at least one file.','error'); return; }
+  const label = document.getElementById('label').value;
+  const btn = document.getElementById('upBtn'); btn.disabled=true; btn.textContent='Uploading…';
+  const prog = document.getElementById('progress'); prog.textContent = `Uploading 0 of ${files.length}…`;
+  let ok=0, fail=0;
+  for(let i=0;i<files.length;i++){
+    prog.textContent = `Uploading ${i+1} of ${files.length}: ${files[i].name}`;
+    const r = await addStudentRequirement(CURRENT.id, files[i], label);
+    if(r.ok) ok++; else fail++;
+  }
+  toast(`${ok} uploaded${fail?`, ${fail} failed`:''}.`, fail?'error':'success');
+  render();
+}
+async function delFile(id){
+  if(!confirm('Delete this file?')) return;
+  await deleteStudentRequirement(CURRENT.id, id);
+  toast('Deleted.','success'); render();
+}
+async function openFile(path){
+  const url = await getRequirementUrl(path);
+  if(url) window.open(url,'_blank'); else toast('Cannot open file.','error');
+}
+render();
+</script>
+</body>
+</html>
