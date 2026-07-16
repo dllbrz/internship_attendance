@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Account — Admin · Naic OJT</title>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../css/styles.css">
+</head>
+<body>
+<div class="app-shell" id="shell"><div style="padding:40px;text-align:center">Loading…</div></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../js/supabase-config.js"></script>
+<script src="../js/data.js"></script>
+<script>
+let CURRENT_ADMIN = null;
+let ADMINS = [];
+
+async function render(){
+  CURRENT_ADMIN = await requireAdmin();
+  if(!CURRENT_ADMIN) return;
+
+  document.getElementById('shell').innerHTML = renderSidebar('admin','account') + `
+    <main class="main">
+      ${renderTopbar('Account Settings','Change your password and manage administrators.')}
+      <div class="card-grid-2">
+        <div class="card">
+          <div class="card-head"><div class="card-title">Change Password</div></div>
+          <form onsubmit="chPass(event)">
+            <div class="form-row">
+              <div class="form-group"><label>New Password</label><input class="form-control" type="password" id="n1" required minlength="8"></div>
+              <div class="form-group"><label>Confirm</label><input class="form-control" type="password" id="n2" required minlength="8"></div>
+            </div>
+            <p class="text-muted text-sm">Minimum 8 characters. You'll stay signed in.</p>
+            <button class="btn btn-primary">Update Password</button>
+          </form>
+        </div>
+        <div class="card">
+          <div class="card-head"><div class="card-title">Add Admin</div></div>
+          <form onsubmit="addAdmin(event)">
+            <div class="form-group"><label>Full Name</label><input class="form-control" id="an" required></div>
+            <div class="form-row">
+              <div class="form-group"><label>Email</label><input class="form-control" type="email" id="ae" required placeholder="name@naic.gov.ph"></div>
+              <div class="form-group"><label>Password</label><input class="form-control" type="password" id="ap" required minlength="8"></div>
+            </div>
+            <p class="text-muted text-sm">Creates a confirmed Supabase Auth user and grants the <code>admin</code> role.</p>
+            <button class="btn btn-yellow" id="addAdminBtn">Add Administrator</button>
+          </form>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <div class="card-title">Administrators</div>
+          <button class="btn btn-ghost btn-sm" onclick="loadAdmins()">Refresh</button>
+        </div>
+        <div class="table-wrap" id="adminTable"><div class="text-muted p-4">Loading…</div></div>
+      </div>
+    </main>`;
+  startClock('#clockBox');
+  await loadAdmins();
+}
+
+async function loadAdmins(){
+  const wrap = document.getElementById('adminTable');
+  wrap.innerHTML = '<div class="text-muted p-4">Loading…</div>';
+  const r = await adminManage('list');
+  if(!r.ok){ wrap.innerHTML = `<div class="p-4" style="color:var(--red)">${r.error}</div>`; return; }
+  ADMINS = r.data.admins || [];
+  wrap.innerHTML = `<table>
+    <thead><tr><th>Name</th><th>Email</th><th>Created</th><th>Role</th><th style="text-align:right">Action</th></tr></thead>
+    <tbody>${ADMINS.map(a=>`
+      <tr>
+        <td>${escapeHtml(a.name)}</td>
+        <td>${escapeHtml(a.email)}</td>
+        <td>${new Date(a.created_at).toLocaleDateString()}</td>
+        <td><span class="pill blue">Admin</span></td>
+        <td style="text-align:right">${a.is_self
+          ? '<span class="text-muted text-sm">You</span>'
+          : `<button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="delAdmin('${a.id}','${escapeHtml(a.email)}')">Remove</button>`}</td>
+      </tr>`).join('')}</tbody></table>`;
+}
+
+async function chPass(e){
+  e.preventDefault();
+  if(n1.value !== n2.value){ toast('Passwords do not match','error'); return; }
+  const r = await updateCurrentPassword(n1.value);
+  if(!r.ok){ toast(r.error,'error'); return; }
+  n1.value = ''; n2.value = '';
+  toast('Password changed','success');
+}
+
+async function addAdmin(e){
+  e.preventDefault();
+  const btn = document.getElementById('addAdminBtn');
+  btn.disabled = true; btn.textContent = 'Adding…';
+  const r = await adminManage('create', { full_name: an.value.trim(), email: ae.value.trim(), password: ap.value });
+  btn.disabled = false; btn.textContent = 'Add Administrator';
+  if(!r.ok){ toast(r.error,'error'); return; }
+  an.value = ''; ae.value = ''; ap.value = '';
+  toast('Administrator added','success');
+  await loadAdmins();
+}
+
+async function delAdmin(userId, email){
+  if(!confirm(`Delete admin ${email}? This removes their Supabase Auth account.`)) return;
+  const r = await adminManage('delete', { user_id: userId });
+  if(!r.ok){ toast(r.error,'error'); return; }
+  toast('Administrator removed','success');
+  await loadAdmins();
+}
+
+function escapeHtml(s){ return String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+render();
+</script>
+</body></html>

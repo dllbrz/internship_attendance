@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Dashboard — Admin · Naic OJT</title>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../css/styles.css">
+</head>
+<body>
+<div class="app-shell" id="shell"><div style="padding:40px;text-align:center">Loading…</div></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../js/supabase-config.js"></script>
+<script src="../js/data.js"></script>
+<script src="../js/app.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+(async()=>{
+const admin = await requireAdmin();
+if(admin){
+  const db = getDB();
+  const activeStudents = db.students.filter(s=>s.active);
+  const today = todayStr();
+  const todayRecs = db.attendance.filter(a=>a.date===today);
+  const present = todayRecs.filter(a=>a.status==='present').length;
+  const late = todayRecs.filter(a=>a.status==='late').length;
+  const absent = activeStudents.length - todayRecs.length;
+  const totalHrs = +db.attendance.reduce((s,a)=>s+(a.hours||0),0).toFixed(2);
+
+  // last 7 days
+  const days=[]; for(let i=6;i>=0;i--){const d=new Date();d.setDate(d.getDate()-i);days.push(d.toISOString().slice(0,10));}
+  const presentSeries=days.map(d=>db.attendance.filter(a=>a.date===d && a.status==='present').length);
+  const lateSeries=days.map(d=>db.attendance.filter(a=>a.date===d && a.status==='late').length);
+
+  document.getElementById('shell').innerHTML = renderSidebar('admin','dashboard') + `
+    <main class="main">
+      ${renderTopbar('Welcome back, '+admin.name.split(' ')[0],'Overview of interns and attendance.')}
+      <div class="stat-grid">
+        <div class="stat-card"><div><div class="stat-label">Total OJT Students</div><div class="stat-value">${activeStudents.length}</div><div class="stat-meta">Active accounts</div></div><div class="stat-icon"></div></div>
+        <div class="stat-card green"><div><div class="stat-label">Present Today</div><div class="stat-value">${present}</div></div><div class="stat-icon"></div></div>
+        <div class="stat-card yellow"><div><div class="stat-label">Late Today</div><div class="stat-value">${late}</div></div><div class="stat-icon">️</div></div>
+        <div class="stat-card red"><div><div class="stat-label">Absent Today</div><div class="stat-value">${absent}</div></div><div class="stat-icon"></div></div>
+      </div>
+
+      <div class="card-grid-2">
+        <div class="card"><div class="card-head"><div><div class="card-title">Attendance Trend</div><div class="card-subtitle">Last 7 days</div></div></div>
+        <canvas id="trend" height="90"></canvas></div>
+        <div class="card"><div class="card-head"><div><div class="card-title">Today's Status</div><div class="card-subtitle">${activeStudents.length} total interns</div></div></div>
+        <canvas id="donut" height="90"></canvas></div>
+      </div>
+
+      <div class="card"><div class="card-head"><div><div class="card-title">Attendance Progress</div><div class="card-subtitle">Toward each intern's required hours</div></div>
+      <div class="text-sm text-muted">Total hours rendered (all): <strong style="color:var(--blue-800)">${totalHrs}</strong></div></div>
+      ${activeStudents.map(s=>{const done=totalHours(s.id);const pct=Math.min(100,(done/s.required_hours)*100).toFixed(0);
+        return `<div style="margin-bottom:10px"><div class="progress-label"><span>${s.name} <span class="text-muted">(${s.id})</span></span><strong>${done}/${s.required_hours} (${pct}%)</strong></div><div class="progress-wrap"><div class="progress-bar" style="width:${pct}%"></div></div></div>`;}).join('')}
+      </div>
+    </main>`;
+  startClock('#clockBox');
+  new Chart(document.getElementById('trend'),{type:'line',data:{labels:days.map(d=>d.slice(5)),datasets:[
+    {label:'Present',data:presentSeries,borderColor:'#22c55e',backgroundColor:'rgba(34,197,94,.15)',tension:.3,fill:true},
+    {label:'Late',data:lateSeries,borderColor:'#fdc22b',backgroundColor:'rgba(253,194,43,.15)',tension:.3,fill:true}
+  ]},options:{responsive:true,plugins:{legend:{position:'bottom'}}}});
+  new Chart(document.getElementById('donut'),{type:'doughnut',data:{labels:['Present','Late','Absent'],datasets:[{data:[present,late,absent],backgroundColor:['#22c55e','#fdc22b','#ef4444']}]},options:{plugins:{legend:{position:'bottom'}}}});
+}
+})();
+</script>
+</body></html>
