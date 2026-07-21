@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Scanner — Admin · Naic OJT</title>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../css/styles.css">
+</head>
+<body>
+<div class="app-shell" id="shell"><div style="padding:40px;text-align:center">Loading…</div></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../js/supabase-config.js"></script>
+<script src="../js/data.js"></script>
+<script src="../js/app.js"></script>
+<script src="https://unpkg.com/html5-qrcode@2.3.10/html5-qrcode.min.js"></script>
+<script>
+let scanner = null;
+let lastScannedAt = 0;
+
+async function render(){
+  const admin = await requireAdmin(); if(!admin) return;
+  document.getElementById('shell').innerHTML = renderSidebar('admin','scanner') + `
+    <main class="main">
+      ${renderTopbar('QR Scanner', 'Scan an intern QR to auto-recognize them and mark Time In. Auto-status: Present or Late.')}
+      <div class="card-grid-2">
+        <div class="card">
+          <div class="card-title">Camera</div>
+          <div id="reader" style="width:100%;max-width:420px;margin:0 auto"></div>
+          <div class="text-muted text-sm mt-2">Or enter Intern ID manually:</div>
+          <div style="display:flex;gap:8px;margin-top:6px">
+            <input class="form-control" id="manual" placeholder="OJT-2025-001">
+            <button class="btn btn-primary" onclick="scanManual()">Scan</button>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title">Today's Scans</div>
+          <table class="table">
+            <thead><tr><th>Intern ID</th><th>Name</th><th>Time In</th><th>Remarks</th></tr></thead>
+            <tbody id="log"></tbody>
+          </table>
+        </div>
+      </div>
+    </main>`;
+  startClock('#clockBox');
+  drawLog();
+  try {
+    scanner = new Html5Qrcode("reader");
+    await scanner.start({ facingMode:"environment" }, { fps:10, qrbox:250 }, onScan, ()=>{});
+  } catch(e){ /* camera denied; manual still works */ }
+}
+
+async function onScan(text){
+  const now = Date.now();
+  if(now - lastScannedAt < 1500) return; // debounce
+  lastScannedAt = now;
+  const st = resolveQR(text);
+  if(!st){ toast('Unknown QR code','error'); return; }
+  const r = await markPresent(st.id);
+  if(!r.ok){ toast(r.error,'error'); return; }
+  if(r.already){ toast(`${st.name} already timed in.`,'info'); }
+  else { toast(`${st.name} — ${r.status.toUpperCase()} at ${fmt12(r.time)}`, r.status==='late'?'error':'success'); }
+  drawLog();
+}
+async function scanManual(){
+  const v = document.getElementById('manual').value.trim();
+  if(!v) return;
+  await onScan(v);
+  document.getElementById('manual').value = '';
+}
+
+function drawLog(){
+  const today = todayStr();
+  const rows = window.__DB__.attendance
+    .filter(a=>a.date===today && a.time_in)
+    .map(a=>{
+      const s = window.__DB__.students.find(x=>x.id===a.student_id);
+      return { id:a.student_id, name:s?.name||'—', time_in:a.time_in, status:a.status };
+    })
+    .sort((a,b)=>b.time_in.localeCompare(a.time_in));
+  document.getElementById('log').innerHTML = rows.map(r=>`
+    <tr>
+      <td style="font-weight:700;color:var(--blue-800)">${r.id}</td>
+      <td>${r.name}</td>
+      <td>${fmt12(r.time_in)}</td>
+      <td><span class="badge badge-${r.status}">${r.status.charAt(0).toUpperCase()+r.status.slice(1)}</span></td>
+    </tr>`).join('') || '<tr><td colspan="4" style="text-align:center;color:#888;padding:16px">No scans yet today.</td></tr>';
+}
+
+render();
+window.addEventListener('beforeunload', ()=>{ if(scanner) scanner.stop().catch(()=>{}); });
+</script>
+</body>
+</html>
