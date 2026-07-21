@@ -43,6 +43,9 @@ async function render(){
             <div class="card-title" style="margin-bottom:8px">My QR Code</div>
             <div id="qr" style="display:inline-block"></div>
             <div style="font-weight:700;color:var(--blue-800);margin-top:6px">${u.id}</div>
+            <div style="margin-top:10px">
+              <button class="btn btn-primary btn-sm" onclick="downloadQR('${u.id}')">Download QR Code</button>
+            </div>
           </div>
         </div>
 
@@ -65,6 +68,20 @@ async function render(){
     </main>`;
   startClock('#clockBox');
   new QRCode(document.getElementById('qr'), { text:u.qr_token, width:160, height:160, colorDark:'#0d2b6b', colorLight:'#fff' });
+}
+function downloadQR(filename){
+  const holder = document.getElementById('qr');
+  if(!holder){ toast('QR not ready yet.','error'); return; }
+  const canvas = holder.querySelector('canvas');
+  const img = holder.querySelector('img');
+  let dataUrl = null;
+  if(canvas){ dataUrl = canvas.toDataURL('image/png'); }
+  else if(img){ dataUrl = img.src; }
+  if(!dataUrl){ toast('QR not ready yet.','error'); return; }
+  const a = document.createElement('a');
+  a.href = dataUrl; a.download = (filename||'qr-code')+'.png';
+  document.body.appendChild(a); a.click(); a.remove();
+  toast('QR code downloaded.','success');
 }
 async function uploadPic(e){
   const f = e.target.files[0]; if(!f) return;
