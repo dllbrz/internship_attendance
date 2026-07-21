@@ -52,7 +52,11 @@ if(user){
           <div class="card-head"><div><div class="card-title">Your Unique QR Code</div><div class="card-subtitle">Show this to the scanner for quick time in/out.</div></div></div>
           <div class="qr-display"><div id="qr" style="display:inline-block"></div>
             <div style="font-weight:700;color:var(--blue-800)">${user.id}</div>
-            <div class="text-muted text-sm">${user.name}</div></div>
+            <div class="text-muted text-sm">${user.name}</div>
+            <div style="margin-top:10px">
+              <button class="btn btn-primary btn-sm" onclick="downloadQR('${user.id}')">Download QR Code</button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -69,5 +73,19 @@ if(user){
   try{ new QRCode(document.getElementById('qr'), {text:(user.qr_token||user.id), width:200, height:200, colorDark:'#0a1f44', colorLight:'#ffffff'}); }catch(e){console.warn(e);}
 }
 })();
+
+function downloadQR(filename){
+  const holder = document.getElementById('qr');
+  if(!holder){ alert('QR not ready yet.'); return; }
+  const canvas = holder.querySelector('canvas');
+  const img = holder.querySelector('img');
+  let dataUrl = null;
+  if(canvas){ dataUrl = canvas.toDataURL('image/png'); }
+  else if(img){ dataUrl = img.src; }
+  if(!dataUrl){ alert('QR not ready yet.'); return; }
+  const a = document.createElement('a');
+  a.href = dataUrl; a.download = (filename||'qr-code')+'.png';
+  document.body.appendChild(a); a.click(); a.remove();
+}
 </script>
 </body></html>
