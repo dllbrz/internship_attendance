@@ -138,11 +138,14 @@ async function bootstrap(){
   } else {
     const me = (profiles||[]).find(p=>p.id===userId);
     if(me){
-      const legacy = _mapProfileRow(me);
+      let legacy = window.__DB__.students.find(s=>s.auth_id===userId);
+      if(!legacy){ legacy = _mapProfileRow(me); window.__DB__.students.push(legacy); }
+      // IMPORTANT: currentUser MUST be the SAME object reference as the entry in
+      // window.__DB__.students, so that mutations from loadRequirements() /
+      // addStudentRequirement() (which push into st.requirements) are visible
+      // to pages that read from currentUser.requirements.
       window.__DB__.currentUser = legacy;
       window.__DB__.session = { type:'student', id:legacy.id, auth_id:userId };
-      // ensure own profile is in students array
-      if(!window.__DB__.students.some(s=>s.auth_id===userId)) window.__DB__.students.push(legacy);
     }
   }
 
