@@ -22,7 +22,7 @@ async function render(){
       <div class="card">
         <div class="card-title">Active Interns (${students.length})</div>
         <table class="table">
-          <thead><tr><th>ID</th><th>Name</th><th>School</th><th>Course</th><th>Period</th><th>Required Hrs</th><th></th></tr></thead>
+          <thead><tr><th>ID</th><th>Name</th><th>School</th><th>Course</th><th>Period</th><th>Required Hrs</th><th>Documents</th><th></th></tr></thead>
           <tbody id="rows"></tbody>
         </table>
       </div>
@@ -49,6 +49,22 @@ async function render(){
           <button class="btn btn-primary" onclick="saveEdit()">Save Changes</button>
         </div>
       </div>
+    </div>
+
+    <!-- Documents modal: admin views files uploaded by a student -->
+    <div class="modal" id="docsModal">
+      <div class="modal-inner" style="max-width:720px">
+        <div class="modal-head">
+          <h3 id="d_title">Uploaded Documents</h3>
+          <button class="close-x" onclick="closeModal('docsModal')">×</button>
+        </div>
+        <div class="modal-body">
+          <div id="d_body">Loading…</div>
+        </div>
+        <div class="modal-foot">
+          <button class="btn btn-outline" onclick="closeModal('docsModal')">Close</button>
+        </div>
+      </div>
     </div>`;
   startClock('#clockBox');
   drawRows();
@@ -56,7 +72,9 @@ async function render(){
 function drawRows(){
   const rows = document.getElementById('rows');
   const list = window.__DB__.students.filter(s=>s.active);
-  rows.innerHTML = list.map(s=>`
+  rows.innerHTML = list.map(s=>{
+    const n = (s.requirements||[]).length;
+    return `
     <tr>
       <td style="font-weight:700;color:var(--blue-800)">${s.id}</td>
       <td>${s.name}</td>
@@ -64,11 +82,13 @@ function drawRows(){
       <td>${s.course||'—'}</td>
       <td>${fmtDate(s.start_date)} – ${fmtDate(s.end_date)}</td>
       <td>${s.required_hours}</td>
+      <td><button class="btn btn-outline btn-sm" onclick="viewDocs('${s.id}')">View (${n})</button></td>
       <td>
         <button class="btn btn-outline btn-sm" onclick="openEdit('${s.id}')">Edit</button>
         <button class="btn btn-outline btn-sm" style="color:#c53030;border-color:#c53030" onclick="archive('${s.id}')">Archive</button>
       </td>
-    </tr>`).join('') || '<tr><td colspan="7" style="text-align:center;color:#888">No active students yet. Newly registered accounts will appear here automatically.</td></tr>';
+    </tr>`;
+  }).join('') || '<tr><td colspan="8" style="text-align:center;color:#888">No active students yet. Newly registered accounts will appear here automatically.</td></tr>';
 }
 function openEdit(id){
   const s = window.__DB__.students.find(x=>x.id===id); if(!s) return;
@@ -94,6 +114,39 @@ async function archive(id){
   if(!confirm('Archive this student? They will lose access until reactivated.')) return;
   await updateStudent(id, { active:false });
   toast('Archived.','success'); drawRows();
+}
+
+// Admin: view documents uploaded by a specific intern
+function viewDocs(id){
+  const s = window.__DB__.students.find(x=>x.id===id); if(!s) return;
+  document.getElementById('d_title').textContent = `Documents — ${s.name} (${s.id})`;
+  const reqs = s.requirements || [];
+  document.getElementById('d_body').innerHTML = reqs.length === 0
+    ? '<p class="text-muted">This intern has not uploaded any documents yet.</p>'
+    : '<table class="table"><thead><tr><th>File</th><th>Label</th><th>Size</th><th>Uploaded</th><th></th></tr></thead><tbody>'
+      + reqs.map(r=>`<tr>
+          <td>${r.name}</td>
+          <td>${r.label||'—'}</td>
+          <td>${humanSize(r.size)}</td>
+          <td>${fmtDate(r.uploaded_at)}</td>
+          <td>
+            <button class="btn btn-outline btn-sm" onclick="adminOpenFile('${r.path}')">View</button>
+            <button class="btn btn-outline btn-sm" onclick="adminDownloadFile('${r.path}','${r.name.replace(/'/g,"\\'")}')">Download</button>
+          </td>
+        </tr>`).join('')
+      + '</tbody></table>';
+  openModal('docsModal');
+}
+async function adminOpenFile(path){
+  const url = await getRequirementUrl(path);
+  if(url) window.open(url,'_blank'); else toast('Cannot open file.','error');
+}
+async function adminDownloadFile(path, filename){
+  const url = await getRequirementUrl(path);
+  if(!url){ toast('Cannot download file.','error'); return; }
+  const a = document.createElement('a');
+  a.href = url; a.download = filename || 'document'; a.target = '_blank';
+  document.body.appendChild(a); a.click(); a.remove();
 }
 render();
 </script>
