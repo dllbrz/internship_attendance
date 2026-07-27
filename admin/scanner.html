@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Scanner — Admin · Naic OJT</title>
+<title>Archived — Admin · Naic OJT</title>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="../css/styles.css">
 </head>
@@ -12,154 +12,123 @@
 <script src="../js/supabase-config.js"></script>
 <script src="../js/data.js"></script>
 <script src="../js/app.js"></script>
-<script src="https://unpkg.com/html5-qrcode@2.3.10/html5-qrcode.min.js"></script>
 <script>
-let scanner = null;
-let lastScannedAt = 0;
-let cameraStarted = false;
-
 async function render(){
   const admin = await requireAdmin(); if(!admin) return;
-  const sch = getOfficeSchedule();
-  document.getElementById('shell').innerHTML = renderSidebar('admin','scanner') + `
+  const db = getDB();
+  // Archived = interns whose account was archived by an admin (active=false)
+  const list = db.students.filter(s => s.active === false);
+
+  document.getElementById('shell').innerHTML = renderSidebar('admin','archived') + `
     <main class="main">
-      ${renderTopbar('QR Scanner', 'Scan an intern QR to record Time In. Late/Absent are computed from the schedule below.')}
-
-      <!-- Office/shift settings bar -->
+      ${renderTopbar('Archived', 'Interns archived from the active list. Restore or permanently delete records here.')}
       <div class="card">
-        <div class="card-title" style="margin-bottom:8px">Office / Shift Schedule</div>
-        <div class="scanner-settings">
-          <div class="form-group">
-            <label>Default Start Time</label>
-            <input type="time" class="form-control" id="s_start" value="${sch.start_time}">
-          </div>
-          <div class="form-group">
-            <label>Grace (min) — Late threshold</label>
-            <input type="number" class="form-control" id="s_grace" min="0" max="120" value="${sch.grace_minutes}">
-          </div>
-          <div class="form-group">
-            <label>Absent after (min)</label>
-            <input type="number" class="form-control" id="s_absent" min="15" max="480" value="${sch.absent_after_minutes}">
-          </div>
-          <button class="btn btn-primary" onclick="saveSchedule()">Save Schedule</button>
-        </div>
-        <p class="text-sm text-muted" style="margin:6px 0 0">
-          Present: on-time or within grace. Late: after grace. Absent: check-in exceeds
-          <strong>Absent after</strong> minutes past the start time (default 1 hour).
-        </p>
+        <div class="card-title">Archived Interns (${list.length})</div>
+        <div class="table-wrap"><table class="table">
+          <thead><tr><th>ID</th><th>Name</th><th>School</th><th>Period</th><th>Rendered</th><th style="text-align:right">Actions</th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table></div>
       </div>
+    </main>
 
-      <div class="card-grid-2">
-        <div class="card">
-          <div class="card-title">Camera</div>
-          <div id="reader" style="width:100%;max-width:420px;margin:0 auto"></div>
-          <div id="camMsg" class="camera-msg" style="display:none"></div>
-          <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
-            <button class="btn btn-primary btn-sm" id="startCamBtn" onclick="startCamera()">Enable Camera</button>
-            <button class="btn btn-outline btn-sm" onclick="stopCamera()">Stop Camera</button>
+    <div class="modal" id="profileModal">
+      <div class="modal-inner" style="max-width:560px">
+        <div class="modal-head"><h3>Archived Intern</h3><button class="close-x" onclick="closeModal('profileModal')">×</button></div>
+        <div class="modal-body" id="profileBody"></div>
+        <div class="modal-foot"><button class="btn btn-outline" onclick="closeModal('profileModal')">Close</button></div>
+      </div>
+    </div>
+
+    <div class="modal" id="confirmDel">
+      <div class="modal-inner" style="max-width:440px">
+        <div class="modal-head"><h3>Permanently delete record?</h3><button class="close-x" onclick="closeModal('confirmDel')">×</button></div>
+        <div class="modal-body">
+          <p>This will <strong>permanently remove</strong> <span id="delName" style="color:var(--blue-900);font-weight:700"></span> and all of their attendance and requirement records. This action cannot be undone.</p>
+          <div class="form-group" style="margin-top:12px">
+            <label>Type <code>DELETE</code> to confirm</label>
+            <input class="form-control" id="delConfirm" placeholder="DELETE" autocomplete="off">
           </div>
-          <div class="text-muted text-sm mt-2">Or enter Intern ID manually:</div>
-          <div style="display:flex;gap:8px;margin-top:6px">
-            <input class="form-control" id="manual" placeholder="OJT-2025-001">
-            <button class="btn btn-primary" onclick="scanManual()">Scan</button>
-          </div>
+          <div class="form-error" id="delErr"></div>
         </div>
-        <div class="card">
-          <div class="card-title">Today's Scans</div>
-          <div class="table-wrap">
-            <table class="table">
-              <thead><tr><th>Intern ID</th><th>Name</th><th>Time In</th><th>Status</th></tr></thead>
-              <tbody id="log"></tbody>
-            </table>
-          </div>
+        <div class="modal-foot">
+          <button class="btn btn-outline" onclick="closeModal('confirmDel')">Cancel</button>
+          <button class="btn" style="background:#c53030;color:#fff" onclick="confirmDelete()">Delete permanently</button>
         </div>
       </div>
-    </main>`;
+    </div>`;
   startClock('#clockBox');
-  drawLog();
-  // auto-attempt to start camera on load (some browsers/UX require an explicit gesture)
-  startCamera();
+  drawRows();
 }
 
-function saveSchedule(){
-  const start = document.getElementById('s_start').value || '08:00';
-  const grace = +document.getElementById('s_grace').value || 0;
-  const absent = +document.getElementById('s_absent').value || 60;
-  setOfficeSchedule({ start_time:start, grace_minutes:grace, absent_after_minutes:absent });
-  toast('Schedule saved.','success');
+function drawRows(){
+  const list = getDB().students.filter(s => s.active === false);
+  document.getElementById('rows').innerHTML = list.length ? list.map(s => {
+    const done = totalHours(s.id);
+    return `<tr>
+      <td style="font-weight:700;color:var(--blue-800)">${s.id}</td>
+      <td><div class="cell-name">${profileIconHTML(s,30)}<span class="name-text">${s.name}</span><div class="text-muted text-sm" style="margin-left:8px">${s.course||''}</div></div></td>
+      <td>${s.school||'—'}</td>
+      <td class="text-sm">${fmtDate(s.start_date)}<br><span class="text-muted">to ${fmtDate(s.end_date)}</span></td>
+      <td><span class="pill ${done>=s.required_hours?'green':'gray'}">${done}/${s.required_hours} hrs</span></td>
+      <td style="text-align:right;white-space:nowrap">
+        <button class="btn btn-outline btn-sm" onclick="showProfile('${s.id}')">View</button>
+        <button class="btn btn-primary btn-sm" onclick="unarchive('${s.id}')">Unarchive</button>
+        <button class="btn btn-sm" style="background:#c53030;color:#fff" onclick="askDelete('${s.id}')">Delete Record</button>
+      </td>
+    </tr>`;
+  }).join('') : '<tr><td colspan="6" class="text-center text-muted" style="padding:24px">No archived interns.</td></tr>';
 }
 
-async function startCamera(){
-  const msg = document.getElementById('camMsg');
-  msg.style.display = 'none';
-  try {
-    if(!scanner) scanner = new Html5Qrcode("reader");
-    if(cameraStarted) return;
-    // Prefer rear camera; fall back to any camera if unavailable.
-    try {
-      await scanner.start({ facingMode:{ exact:"environment" } }, { fps:10, qrbox:250 }, onScan, ()=>{});
-    } catch(_){
-      await scanner.start({ facingMode:"environment" }, { fps:10, qrbox:250 }, onScan, ()=>{});
-    }
-    cameraStarted = true;
-    document.getElementById('startCamBtn').textContent = 'Camera Active';
-  } catch(e){
-    msg.style.display = 'block';
-    const err = String(e && e.message || e);
-    if(/permission|denied|NotAllowed/i.test(err)){
-      msg.innerHTML = 'Camera permission was denied. Enable camera access for this site in your browser settings, then click <strong>Enable Camera</strong> again.';
-    } else if(/NotFound|no device/i.test(err)){
-      msg.textContent = 'No camera detected on this device.';
-    } else if(/Insecure|secure context/i.test(err) || location.protocol==='http:'){
-      msg.textContent = 'Camera requires HTTPS. Serve this page via https:// (or localhost) and reload.';
-    } else {
-      msg.textContent = 'Cannot start camera: '+err;
-    }
-  }
-}
-async function stopCamera(){
-  try { if(scanner && cameraStarted){ await scanner.stop(); await scanner.clear(); cameraStarted=false; document.getElementById('startCamBtn').textContent='Enable Camera'; } } catch(_){}
+function showProfile(id){
+  const s = getDB().students.find(x=>x.id===id); if(!s) return;
+  const done = totalHours(s.id);
+  document.getElementById('profileBody').innerHTML = `
+    <div style="display:flex;gap:14px;align-items:center;margin-bottom:14px">
+      ${profileIconHTML(s,64)}
+      <div><div style="font-size:17px;font-weight:700;color:var(--blue-900)">${s.name}</div>
+      <div class="text-muted">${s.id}</div></div>
+    </div>
+    <div class="profile-view">
+      <div class="pv-row"><span>Email</span><strong>${s.email||'—'}</strong></div>
+      <div class="pv-row"><span>Phone</span><strong>${s.phone||'—'}</strong></div>
+      <div class="pv-row"><span>School</span><strong>${s.school||'—'}</strong></div>
+      <div class="pv-row"><span>Course</span><strong>${s.course||'—'}</strong></div>
+      <div class="pv-row"><span>Adviser</span><strong>${s.adviser_name||'—'}</strong></div>
+      <div class="pv-row"><span>Adviser Contact</span><strong>${s.adviser_contact||'—'}</strong></div>
+      <div class="pv-row"><span>OJT Period</span><strong>${fmtDate(s.start_date)} – ${fmtDate(s.end_date)}</strong></div>
+      <div class="pv-row"><span>Required Hours</span><strong>${s.required_hours} hrs</strong></div>
+      <div class="pv-row"><span>Rendered Hours</span><strong>${done} hrs</strong></div>
+    </div>`;
+  openModal('profileModal');
 }
 
-async function onScan(text){
-  const now = Date.now();
-  if(now - lastScannedAt < 1500) return;
-  lastScannedAt = now;
-  const st = resolveQR(text);
-  if(!st){ toast('Unknown QR code','error'); return; }
-  const r = await markPresent(st.id);
+async function unarchive(id){
+  if(!confirm('Restore this intern to the active Students list?')) return;
+  const r = await unarchiveStudent(id);
   if(!r.ok){ toast(r.error,'error'); return; }
-  if(r.already){ toast(`${st.name} already timed in.`,'info'); }
-  else { toast(`${st.name} — ${r.status.toUpperCase()} at ${fmt12(r.time)}`, r.status==='late'?'error':'success'); }
-  drawLog();
-}
-async function scanManual(){
-  const v = document.getElementById('manual').value.trim();
-  if(!v) return;
-  await onScan(v);
-  document.getElementById('manual').value = '';
+  toast('Intern restored to active list.','success');
+  drawRows();
 }
 
-function drawLog(){
-  const today = todayStr();
-  const rows = window.__DB__.attendance
-    .filter(a=>a.date===today && a.time_in)
-    .map(a=>{
-      const s = window.__DB__.students.find(x=>x.id===a.student_id);
-      return { id:a.student_id, name:s?.name||'—', time_in:a.time_in, status:a.status };
-    })
-    .sort((a,b)=>b.time_in.localeCompare(a.time_in));
-  document.getElementById('log').innerHTML = rows.map(r=>`
-    <tr>
-      <td style="font-weight:700;color:var(--blue-800)">${r.id}</td>
-      <td>${r.name}</td>
-      <td>${fmt12(r.time_in)}</td>
-      <td><span class="badge badge-${r.status}">${r.status.charAt(0).toUpperCase()+r.status.slice(1)}</span></td>
-    </tr>`).join('') || '<tr><td colspan="4" style="text-align:center;color:#888;padding:16px">No scans yet today.</td></tr>';
+let PENDING_DEL = null;
+function askDelete(id){
+  const s = getDB().students.find(x=>x.id===id); if(!s) return;
+  PENDING_DEL = id;
+  document.getElementById('delName').textContent = `${s.name} (${s.id})`;
+  document.getElementById('delConfirm').value = '';
+  document.getElementById('delErr').textContent = '';
+  openModal('confirmDel');
+}
+async function confirmDelete(){
+  const val = document.getElementById('delConfirm').value.trim();
+  if(val !== 'DELETE'){ document.getElementById('delErr').textContent = 'Please type DELETE to confirm.'; return; }
+  const r = await deleteStudent(PENDING_DEL);
+  if(!r.ok){ document.getElementById('delErr').textContent = r.error; return; }
+  closeModal('confirmDel'); PENDING_DEL = null;
+  toast('Record permanently deleted.','success');
+  drawRows();
 }
 
 render();
-window.addEventListener('beforeunload', stopCamera);
 </script>
-</body>
-</html>
+</body></html>
