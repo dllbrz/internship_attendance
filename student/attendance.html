@@ -31,10 +31,10 @@ async function render(){
       <div class="stat-grid">
         <div class="stat-card"><div><div class="stat-label">Today</div>
           <div class="stat-value">${today?(today.time_out?'DONE':today.status.toUpperCase()):'NOT IN'}</div>
-          <div class="stat-meta">${fmtDate(todayStr())}</div></div><div class="stat-icon"></div></div>
-        <div class="stat-card green"><div><div class="stat-label">Total Rendered</div><div class="stat-value">${total}</div><div class="stat-meta">hours</div></div><div class="stat-icon"></div></div>
-        <div class="stat-card"><div><div class="stat-label">Present Days</div><div class="stat-value">${presentCount}</div></div><div class="stat-icon"></div></div>
-        <div class="stat-card yellow"><div><div class="stat-label">Late Records</div><div class="stat-value">${lateCount}</div></div><div class="stat-icon">️</div></div>
+          <div class="stat-meta">${fmtDate(todayStr())}</div></div><div class="stat-icon">${STAT_ICONS.status}</div></div>
+        <div class="stat-card green"><div><div class="stat-label">Total Rendered</div><div class="stat-value">${total}</div><div class="stat-meta">hours</div></div><div class="stat-icon">${STAT_ICONS.hours}</div></div>
+        <div class="stat-card"><div><div class="stat-label">Present Days</div><div class="stat-value">${presentCount}</div></div><div class="stat-icon">${STAT_ICONS.present}</div></div>
+        <div class="stat-card yellow"><div><div class="stat-label">Late Records</div><div class="stat-value">${lateCount}</div></div><div class="stat-icon">${STAT_ICONS.late}</div></div>
       </div>
 
 
