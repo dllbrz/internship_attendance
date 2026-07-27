@@ -28,10 +28,10 @@ async function render(){
     <main class="main">
       ${renderTopbar('My Reports','Personal attendance summary and downloads.')}
       <div class="stat-grid">
-        <div class="stat-card green"><div><div class="stat-label">Hours Rendered</div><div class="stat-value">${total}</div><div class="stat-meta">of ${u.required_hours} required (${pct}%)</div></div><div class="stat-icon"></div></div>
-        <div class="stat-card"><div><div class="stat-label">Present Days</div><div class="stat-value">${present}</div></div><div class="stat-icon"></div></div>
-        <div class="stat-card yellow"><div><div class="stat-label">Late Days</div><div class="stat-value">${late}</div></div><div class="stat-icon">️</div></div>
-        <div class="stat-card"><div><div class="stat-label">Total Records</div><div class="stat-value">${list.length}</div></div><div class="stat-icon"></div></div>
+        <div class="stat-card green"><div><div class="stat-label">Hours Rendered</div><div class="stat-value">${total}</div><div class="stat-meta">of ${u.required_hours} required (${pct}%)</div></div><div class="stat-icon">${STAT_ICONS.hours}</div></div>
+        <div class="stat-card"><div><div class="stat-label">Present Days</div><div class="stat-value">${present}</div></div><div class="stat-icon">${STAT_ICONS.present}</div></div>
+        <div class="stat-card yellow"><div><div class="stat-label">Late Days</div><div class="stat-value">${late}</div></div><div class="stat-icon">${STAT_ICONS.late}</div></div>
+        <div class="stat-card"><div><div class="stat-label">Total Records</div><div class="stat-value">${list.length}</div></div><div class="stat-icon">${STAT_ICONS.total}</div></div>
       </div>
 
       <div class="card">
