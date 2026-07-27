@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Account — Admin · Naic OJT</title>
+<title>Reports — Admin · Naic OJT</title>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="../css/styles.css">
 </head>
@@ -12,251 +12,219 @@
 <script src="../js/supabase-config.js"></script>
 <script src="../js/data.js"></script>
 <script src="../js/app.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.1/jspdf.plugin.autotable.min.js"></script>
 <script>
-let CURRENT_ADMIN = null;
-let ADMINS = [];
-let EDIT_INTERN_ID = null;
+let TREND_CHART = null;
+
+function isoDaysAgo(n){
+  const d = new Date(); d.setDate(d.getDate() - n);
+  return d.toISOString().slice(0,10);
+}
 
 async function render(){
-  CURRENT_ADMIN = await requireAdmin();
-  if(!CURRENT_ADMIN) return;
+  const admin = await requireAdmin(); if(!admin) return;
+  const students = window.__DB__.students;
 
-  document.getElementById('shell').innerHTML = renderSidebar('admin','account') + `
+  document.getElementById('shell').innerHTML = renderSidebar('admin','reports') + `
     <main class="main">
-      ${renderTopbar('Account Settings','Edit your admin profile, manage administrators, and update intern accounts.')}
+      ${renderTopbar('Reports','Attendance analytics across all interns. Filter, then export to CSV, PDF, or print.')}
 
-      <!-- Admin's own profile -->
       <div class="card">
-        <div class="card-head"><div class="card-title">My Admin Profile</div></div>
-        <div style="display:flex;gap:20px;align-items:center;flex-wrap:wrap">
-          <div class="avatar" style="width:96px;height:96px;font-size:28px;overflow:hidden;border-radius:50%;flex-shrink:0">
-            ${CURRENT_ADMIN.avatar ? `<img src="${CURRENT_ADMIN.avatar}" alt="" style="width:100%;height:100%;object-fit:cover">` : (CURRENT_ADMIN.name||'A').split(' ').map(x=>x[0]).slice(0,2).join('').toUpperCase()}
+        <div class="card-title" style="margin-bottom:8px">Filters</div>
+        <div class="scanner-settings" role="group" aria-label="Report filters">
+          <div class="form-group">
+            <label for="f_from">From</label>
+            <input type="date" class="form-control" id="f_from" value="${isoDaysAgo(29)}">
           </div>
-          <div style="flex:1;min-width:240px">
-            <div class="form-group"><label>Display Name / Username</label>
-              <input class="form-control" id="admName" value="${escapeAttr(CURRENT_ADMIN.name||'')}"></div>
-            <div class="text-muted text-sm">Email: <strong>${escapeHtml(CURRENT_ADMIN.email||'')}</strong></div>
+          <div class="form-group">
+            <label for="f_to">To</label>
+            <input type="date" class="form-control" id="f_to" value="${todayStr()}">
           </div>
-          <div style="display:flex;flex-direction:column;gap:8px">
-            <input type="file" id="admPic" accept="image/*" style="display:none" onchange="admUploadPic(event)">
-            <button class="btn btn-outline btn-sm" onclick="document.getElementById('admPic').click()">Upload / Change Photo</button>
-            <button class="btn btn-outline btn-sm" style="color:#c53030;border-color:#c53030" onclick="admDelPic()" ${CURRENT_ADMIN.avatar?'':'disabled'}>Delete Photo</button>
-            <button class="btn btn-primary btn-sm" onclick="admSaveName()">Save Name</button>
+          <div class="form-group">
+            <label for="f_student">Intern</label>
+            <select class="form-control" id="f_student">
+              <option value="">All interns</option>
+              ${students.map(s=>`<option value="${s.id}">${s.id} — ${s.name}</option>`).join('')}
+            </select>
           </div>
+          <div class="form-group">
+            <label for="f_status">Status</label>
+            <select class="form-control" id="f_status">
+              <option value="">All statuses</option>
+              <option value="present">Present</option>
+              <option value="late">Late</option>
+              <option value="absent">Absent</option>
+            </select>
+          </div>
+          <button class="btn btn-primary" onclick="applyFilters()">Apply Filters</button>
+          <button class="btn btn-outline" onclick="resetFilters()">Reset</button>
         </div>
       </div>
 
-      <div class="card-grid-2">
-        <div class="card">
-          <div class="card-head"><div class="card-title">Change Password</div></div>
-          <form onsubmit="chPass(event)">
-            <div class="form-row">
-              <div class="form-group"><label>New Password</label><input class="form-control" type="password" id="n1" required minlength="8"></div>
-              <div class="form-group"><label>Confirm</label><input class="form-control" type="password" id="n2" required minlength="8"></div>
-            </div>
-            <p class="text-muted text-sm">Minimum 8 characters. You'll stay signed in.</p>
-            <button class="btn btn-primary">Update Password</button>
-          </form>
-        </div>
-        <div class="card">
-          <div class="card-head"><div class="card-title">Add Admin</div></div>
-          <form onsubmit="addAdmin(event)">
-            <div class="form-group"><label>Full Name</label><input class="form-control" id="an" required></div>
-            <div class="form-row">
-              <div class="form-group"><label>Email</label><input class="form-control" type="email" id="ae" required placeholder="name@naic.gov.ph"></div>
-              <div class="form-group"><label>Password</label><input class="form-control" type="password" id="ap" required minlength="8"></div>
-            </div>
-            <p class="text-muted text-sm">Creates a confirmed account and grants the <code>admin</code> role.</p>
-            <button class="btn btn-yellow" id="addAdminBtn">Add Administrator</button>
-          </form>
-        </div>
+      <div class="stat-grid" id="stats"></div>
+
+      <div class="card">
+        <div class="card-head"><div class="card-title">Attendance Trend</div></div>
+        <canvas id="trend" height="90"></canvas>
       </div>
 
       <div class="card">
         <div class="card-head">
-          <div class="card-title">Administrators</div>
-          <button class="btn btn-ghost btn-sm" onclick="loadAdmins()">Refresh</button>
+          <div class="card-title">Attendance Records</div>
+          <div class="flex gap-2">
+            <button class="btn btn-outline btn-sm" onclick="csv()">Export CSV</button>
+            <button class="btn btn-primary btn-sm" onclick="pdf()">Export PDF</button>
+            <button class="btn btn-yellow btn-sm" onclick="prn()">Print</button>
+          </div>
         </div>
-        <div class="table-wrap" id="adminTable"><div class="text-muted p-4">Loading…</div></div>
+        <div class="table-wrap">
+          <table class="table" id="tbl">
+            <thead><tr><th>Date</th><th>Intern ID</th><th>Name</th><th>Time In</th><th>Time Out</th><th>Hours</th><th>Status</th></tr></thead>
+            <tbody id="rows"></tbody>
+          </table>
+        </div>
       </div>
 
-      <!-- Intern account management -->
       <div class="card">
-        <div class="card-head">
-          <div><div class="card-title">Intern Accounts</div>
-          <div class="card-subtitle">Edit intern profile details. Changes save immediately.</div></div>
-          <input class="form-control" id="internSearch" placeholder="Search name or ID…" style="max-width:260px" oninput="drawInterns(this.value)">
+        <div class="card-head"><div class="card-title">Per-Intern Summary</div></div>
+        <div class="table-wrap">
+          <table class="table" id="sumTbl">
+            <thead><tr><th>Intern ID</th><th>Name</th><th>Present</th><th>Late</th><th>Absent</th><th>Hours Rendered</th><th>Required</th><th>Progress</th></tr></thead>
+            <tbody id="sumRows"></tbody>
+          </table>
         </div>
-        <div class="table-wrap"><table class="table">
-          <thead><tr><th>ID</th><th>Name</th><th>School</th><th>Course</th><th>Status</th><th style="text-align:right">Action</th></tr></thead>
-          <tbody id="internRows"></tbody>
-        </table></div>
       </div>
-    </main>
+    </main>`;
 
-    <!-- Edit intern modal -->
-    <div class="modal" id="internModal">
-      <div class="modal-inner" style="max-width:640px">
-        <div class="modal-head"><h3>Edit Intern Account</h3><button class="close-x" onclick="closeModal('internModal')">×</button></div>
-        <div class="modal-body">
-          <div id="i_name" style="font-weight:700;color:var(--blue-900);margin-bottom:10px"></div>
-          <div class="form-row">
-            <div class="form-group"><label>Full Name</label><input class="form-control" id="i_full"></div>
-            <div class="form-group"><label>Phone</label><input class="form-control" id="i_phone"></div>
-          </div>
-          <div class="form-row">
-            <div class="form-group"><label>School</label><input class="form-control" id="i_school"></div>
-            <div class="form-group"><label>Course</label><input class="form-control" id="i_course"></div>
-          </div>
-          <div class="form-group"><label>Address</label><textarea class="form-control" id="i_addr" rows="2"></textarea></div>
-          <div class="form-row">
-            <div class="form-group"><label>Adviser Name</label><input class="form-control" id="i_adv"></div>
-            <div class="form-group"><label>Adviser Contact</label><input class="form-control" id="i_advc"></div>
-          </div>
-          <div class="form-row">
-            <div class="form-group"><label>Start Date</label><input type="date" class="form-control" id="i_start"></div>
-            <div class="form-group"><label>End Date</label><input type="date" class="form-control" id="i_end"></div>
-          </div>
-          <div class="form-row">
-            <div class="form-group"><label>Required Hours</label><input type="number" class="form-control" id="i_hours" min="1"></div>
-            <div class="form-group"><label>Expected Time In</label><input type="time" class="form-control" id="i_tin"></div>
-          </div>
-          <div class="form-error" id="i_err"></div>
-        </div>
-        <div class="modal-foot">
-          <button class="btn btn-outline" onclick="closeModal('internModal')">Cancel</button>
-          <button class="btn btn-primary" onclick="saveIntern()">Save Changes</button>
-        </div>
-      </div>
-    </div>`;
   startClock('#clockBox');
-  drawInterns('');
-  await loadAdmins();
+  applyFilters();
 }
 
-async function loadAdmins(){
-  const wrap = document.getElementById('adminTable');
-  wrap.innerHTML = '<div class="text-muted p-4">Loading…</div>';
-  const r = await adminManage('list');
-  if(!r.ok){ wrap.innerHTML = `<div class="p-4" style="color:var(--red)">${escapeHtml(r.error)}</div>`; return; }
-  ADMINS = r.data.admins || [];
-  wrap.innerHTML = `<table>
-    <thead><tr><th>Name</th><th>Email</th><th>Created</th><th>Role</th><th style="text-align:right">Action</th></tr></thead>
-    <tbody>${ADMINS.map(a=>`
-      <tr>
-        <td>${escapeHtml(a.name)}</td><td>${escapeHtml(a.email)}</td>
-        <td>${new Date(a.created_at).toLocaleDateString()}</td>
-        <td><span class="pill blue">Admin</span></td>
-        <td style="text-align:right">${a.is_self ? '<span class="text-muted text-sm">You</span>'
-          : `<button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="delAdmin('${a.id}','${escapeAttr(a.email)}')">Remove</button>`}</td>
-      </tr>`).join('')}</tbody></table>`;
-}
-
-function drawInterns(q){
-  const search = (q||'').toLowerCase().trim();
-  const list = getDB().students.filter(s => !search || s.id.toLowerCase().includes(search) || (s.name||'').toLowerCase().includes(search));
-  document.getElementById('internRows').innerHTML = list.length ? list.map(s=>`
-    <tr>
-      <td style="font-weight:700;color:var(--blue-800)">${s.id}</td>
-      <td><div class="cell-name">${profileIconHTML(s,28)}<span class="name-text">${escapeHtml(s.name||'')}</span></div></td>
-      <td>${escapeHtml(s.school||'—')}</td>
-      <td>${escapeHtml(s.course||'—')}</td>
-      <td>${s.active===false?'<span class="pill gray">Archived</span>':'<span class="pill green">Active</span>'}</td>
-      <td style="text-align:right"><button class="btn btn-outline btn-sm" onclick="openIntern('${s.id}')">Edit</button></td>
-    </tr>`).join('') : '<tr><td colspan="6" class="text-center text-muted" style="padding:16px">No interns found.</td></tr>';
-}
-
-function openIntern(id){
-  const s = getDB().students.find(x=>x.id===id); if(!s) return;
-  EDIT_INTERN_ID = id;
-  document.getElementById('i_name').textContent = `${s.name} · ${s.id}`;
-  document.getElementById('i_full').value = s.name || '';
-  document.getElementById('i_phone').value = s.phone || '';
-  document.getElementById('i_school').value = s.school || '';
-  document.getElementById('i_course').value = s.course || '';
-  document.getElementById('i_addr').value = s.address || '';
-  document.getElementById('i_adv').value = s.adviser_name || '';
-  document.getElementById('i_advc').value = s.adviser_contact || '';
-  document.getElementById('i_start').value = s.start_date || '';
-  document.getElementById('i_end').value = s.end_date || '';
-  document.getElementById('i_hours').value = s.required_hours || '';
-  document.getElementById('i_tin').value = s.expected_time_in || '08:00';
-  document.getElementById('i_err').textContent = '';
-  openModal('internModal');
-}
-
-async function saveIntern(){
-  const patch = {
-    full_name: document.getElementById('i_full').value.trim(),
-    phone: document.getElementById('i_phone').value.trim(),
-    school: document.getElementById('i_school').value.trim(),
-    course: document.getElementById('i_course').value.trim(),
-    address: document.getElementById('i_addr').value.trim(),
-    adviser_name: document.getElementById('i_adv').value.trim(),
-    adviser_contact: document.getElementById('i_advc').value.trim(),
-    start_date: document.getElementById('i_start').value,
-    end_date: document.getElementById('i_end').value,
-    required_hours: +document.getElementById('i_hours').value,
-    expected_time_in: document.getElementById('i_tin').value || '08:00'
+function currentFilters(){
+  return {
+    from: document.getElementById('f_from').value,
+    to: document.getElementById('f_to').value,
+    student: document.getElementById('f_student').value,
+    status: document.getElementById('f_status').value,
   };
-  const r = await updateStudent(EDIT_INTERN_ID, patch);
-  if(!r.ok){ document.getElementById('i_err').textContent = r.error; return; }
-  closeModal('internModal'); toast('Intern updated.','success');
-  drawInterns(document.getElementById('internSearch').value);
 }
 
-async function chPass(e){
-  e.preventDefault();
-  if(n1.value !== n2.value){ toast('Passwords do not match','error'); return; }
-  const r = await updateCurrentPassword(n1.value);
-  if(!r.ok){ toast(r.error,'error'); return; }
-  n1.value = ''; n2.value = '';
-  toast('Password changed','success');
+function filteredRecords(){
+  const f = currentFilters();
+  return window.__DB__.attendance.filter(a=>{
+    if(f.from && a.date < f.from) return false;
+    if(f.to && a.date > f.to) return false;
+    if(f.student && a.student_id !== f.student) return false;
+    if(f.status && a.status !== f.status) return false;
+    return true;
+  }).sort((a,b)=> b.date.localeCompare(a.date) || String(a.student_id).localeCompare(String(b.student_id)));
 }
 
-async function addAdmin(e){
-  e.preventDefault();
-  const btn = document.getElementById('addAdminBtn');
-  btn.disabled = true; btn.textContent = 'Adding…';
-  const r = await adminManage('create', { full_name: an.value.trim(), email: ae.value.trim(), password: ap.value });
-  btn.disabled = false; btn.textContent = 'Add Administrator';
-  if(!r.ok){ toast(r.error,'error'); return; }
-  an.value = ''; ae.value = ''; ap.value = '';
-  toast('Administrator added','success');
-  await loadAdmins();
+function nameOf(internId){
+  const s = window.__DB__.students.find(x=>x.id===internId);
+  return s ? s.name : '—';
 }
 
-async function delAdmin(userId, email){
-  if(!confirm(`Delete admin ${email}? This removes their account permanently.`)) return;
-  const r = await adminManage('delete', { user_id: userId });
-  if(!r.ok){ toast(r.error,'error'); return; }
-  toast('Administrator removed','success');
-  await loadAdmins();
+function resetFilters(){
+  document.getElementById('f_from').value = isoDaysAgo(29);
+  document.getElementById('f_to').value = todayStr();
+  document.getElementById('f_student').value = '';
+  document.getElementById('f_status').value = '';
+  applyFilters();
 }
 
-async function admSaveName(){
-  const name = document.getElementById('admName').value.trim();
-  if(!name){ toast('Name cannot be empty','error'); return; }
-  const r = await updateAdminSelf({ full_name:name });
-  if(!r.ok){ toast(r.error,'error'); return; }
-  toast('Profile updated','success'); render();
-}
-async function admUploadPic(e){
-  const f = e.target.files[0]; if(!f) return;
-  toast('Uploading…','info');
-  const r = await uploadAdminAvatar(f);
-  if(!r.ok){ toast(r.error,'error'); return; }
-  toast('Photo updated','success'); render();
-}
-async function admDelPic(){
-  if(!confirm('Remove your profile photo?')) return;
-  const r = await deleteAdminAvatar();
-  if(!r.ok){ toast(r.error,'error'); return; }
-  toast('Photo removed','success'); render();
+function applyFilters(){
+  const list = filteredRecords();
+  const present = list.filter(r=>r.status==='present').length;
+  const late = list.filter(r=>r.status==='late').length;
+  const absent = list.filter(r=>r.status==='absent').length;
+  const hours = +list.reduce((s,r)=>s+(r.hours||0),0).toFixed(2);
+
+  document.getElementById('stats').innerHTML = `
+    <div class="stat-card green"><div><div class="stat-label">Present</div><div class="stat-value">${present}</div></div><div class="stat-icon">${STAT_ICONS.present}</div></div>
+    <div class="stat-card yellow"><div><div class="stat-label">Late</div><div class="stat-value">${late}</div></div><div class="stat-icon">${STAT_ICONS.late}</div></div>
+    <div class="stat-card red"><div><div class="stat-label">Absent</div><div class="stat-value">${absent}</div></div><div class="stat-icon">${STAT_ICONS.absent}</div></div>
+    <div class="stat-card"><div><div class="stat-label">Hours Rendered</div><div class="stat-value">${hours}</div><div class="stat-meta">${list.length} record(s)</div></div><div class="stat-icon">${STAT_ICONS.hours}</div></div>`;
+
+  document.getElementById('rows').innerHTML = list.map(r=>`
+    <tr>
+      <td>${fmtDate(r.date)}</td>
+      <td style="font-weight:700;color:var(--blue-800)">${r.student_id}</td>
+      <td>${nameOf(r.student_id)}</td>
+      <td>${fmt12(r.time_in)}</td>
+      <td>${fmt12(r.time_out)}</td>
+      <td>${r.hours || '—'}</td>
+      <td><span class="badge badge-${r.status}">${r.status.charAt(0).toUpperCase()+r.status.slice(1)}</span></td>
+    </tr>`).join('') || '<tr><td colspan="7" style="text-align:center;color:#888;padding:16px">No records match the selected filters.</td></tr>';
+
+  drawSummary(list);
+  drawTrend(list);
 }
 
-function escapeHtml(s){ return String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-function escapeAttr(s){ return escapeHtml(s); }
+function drawSummary(list){
+  const f = currentFilters();
+  const students = window.__DB__.students.filter(s=> !f.student || s.id === f.student);
+  document.getElementById('sumRows').innerHTML = students.map(s=>{
+    const recs = list.filter(r=>r.student_id===s.id);
+    const p = recs.filter(r=>r.status==='present').length;
+    const l = recs.filter(r=>r.status==='late').length;
+    const a = recs.filter(r=>r.status==='absent').length;
+    const done = totalHours(s.id);
+    const pct = s.required_hours ? Math.min(100, (done/s.required_hours)*100).toFixed(0) : '0';
+    return `<tr>
+      <td style="font-weight:700;color:var(--blue-800)">${s.id}</td>
+      <td>${s.name}</td><td>${p}</td><td>${l}</td><td>${a}</td>
+      <td>${done}</td><td>${s.required_hours}</td>
+      <td style="min-width:120px">
+        <div class="progress-wrap"><div class="progress-bar" style="width:${pct}%"></div></div>
+        <span class="text-sm text-muted">${pct}%</span>
+      </td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="8" style="text-align:center;color:#888;padding:16px">No interns to summarize.</td></tr>';
+}
+
+function drawTrend(list){
+  const byDate = {};
+  list.forEach(r=>{
+    byDate[r.date] = byDate[r.date] || { present:0, late:0, absent:0 };
+    byDate[r.date][r.status] = (byDate[r.date][r.status] || 0) + 1;
+  });
+  const labels = Object.keys(byDate).sort();
+  const canvas = document.getElementById('trend');
+  if(!canvas || typeof Chart === 'undefined') return;
+  if(TREND_CHART) TREND_CHART.destroy();
+  TREND_CHART = new Chart(canvas, {
+    type:'line',
+    data:{ labels: labels.map(d=>d.slice(5)), datasets:[
+      { label:'Present', data:labels.map(d=>byDate[d].present||0), borderColor:'#22c55e', backgroundColor:'rgba(34,197,94,.15)', tension:.3, fill:true },
+      { label:'Late', data:labels.map(d=>byDate[d].late||0), borderColor:'#fdc22b', backgroundColor:'rgba(253,194,43,.15)', tension:.3, fill:true },
+      { label:'Absent', data:labels.map(d=>byDate[d].absent||0), borderColor:'#ef4444', backgroundColor:'rgba(239,68,68,.12)', tension:.3, fill:true }
+    ]},
+    options:{ responsive:true, plugins:{ legend:{ position:'bottom' } }, scales:{ y:{ beginAtZero:true, ticks:{ precision:0 } } } }
+  });
+}
+
+function reportTitle(){
+  const f = currentFilters();
+  const who = f.student ? `${f.student} — ${nameOf(f.student)}` : 'All Interns';
+  return `Attendance Report (${who}) ${fmtDate(f.from)} – ${fmtDate(f.to)}`;
+}
+
+function csv(){
+  const rows = [['Date','Intern ID','Name','Time In','Time Out','Hours','Status']];
+  filteredRecords().forEach(r=>rows.push([fmtDate(r.date), r.student_id, nameOf(r.student_id), fmt12(r.time_in), fmt12(r.time_out), r.hours||0, r.status]));
+  exportCSV('attendance-report.csv', rows);
+}
+function pdf(){
+  if(!window.jspdf || !window.jspdf.jsPDF){ toast('PDF library still loading. Try again.','error'); return; }
+  const rows = filteredRecords().map(r=>[fmtDate(r.date), r.student_id, nameOf(r.student_id), fmt12(r.time_in), fmt12(r.time_out), String(r.hours||'—'), r.status.toUpperCase()]);
+  exportPDF('attendance-report.pdf', reportTitle(), ['Date','Intern ID','Name','Time In','Time Out','Hours','Status'], rows);
+}
+function prn(){
+  printReport(reportTitle(), document.getElementById('tbl').outerHTML);
+}
 
 render();
 </script>
