@@ -88,7 +88,7 @@ function renderSidebar(kind, active){
       <nav class="sidebar-nav">
         ${items.map(i=> i.group
           ? `<div class="nav-group-title">${i.group}</div>`
-          : `<a href="${i.href}" class="nav-item ${i.key===active?'active':''}"><span class="nav-icon">${i.icon}</span>${i.label}</a>`
+          : `<a href="${i.href}" class="nav-item ${i.key===active?'active':''}"${i.key===active?' aria-current="page"':''}><span class="nav-icon" aria-hidden="true">${i.icon}</span>${i.label}</a>`
         ).join('')}
       </nav>
       <div class="sidebar-foot">
@@ -122,7 +122,7 @@ function renderTopbar(title,subtitle,extra=''){
     <div class="topbar">
       <div class="topbar-left flex items-center gap-3">
         <button class="back-btn" onclick="goBack()" title="Go back"><span class="nav-icon">${ICONS.back}</span> Back</button>
-        <button class="hamburger" onclick="toggleSidebar()"><span class="nav-icon">${ICONS.menu}</span></button>
+        <button class="hamburger" onclick="toggleSidebar()" aria-label="Toggle navigation menu" aria-controls="sidebar"><span class="nav-icon" aria-hidden="true">${ICONS.menu}</span></button>
         <div>
           <h1>${title}</h1>
           <p>${subtitle||''}</p>
@@ -138,8 +138,35 @@ function renderTopbar(title,subtitle,extra=''){
 
 function goBack(){ if(history.length>1){ history.back(); } else { window.location.href='dashboard.html'; } }
 
-function openModal(id){document.getElementById(id).classList.add('open')}
-function closeModal(id){document.getElementById(id).classList.remove('open')}
+/* ---------- Modals ----------
+   `.modal` is a fixed overlay (see css/styles.css); `.open` reveals it.
+   These helpers are null-safe, lock body scroll, move focus into the dialog,
+   and support Escape / click-outside to dismiss. */
+function openModal(id){
+  const el = document.getElementById(id);
+  if(!el){ console.warn('openModal: no element #'+id); return; }
+  el.classList.add('open');
+  document.body.style.overflow = 'hidden';
+  const focusable = el.querySelector('input:not([type=hidden]):not([disabled]), select, textarea, button:not([disabled])');
+  if(focusable) setTimeout(()=>focusable.focus(), 30);
+}
+function closeModal(id){
+  const el = document.getElementById(id);
+  if(!el) return;
+  el.classList.remove('open');
+  if(!document.querySelector('.modal.open')) document.body.style.overflow = '';
+}
+function closeAllModals(){
+  document.querySelectorAll('.modal.open').forEach(m=>m.classList.remove('open'));
+  document.body.style.overflow = '';
+}
+document.addEventListener('keydown', e => { if(e.key === 'Escape') closeAllModals(); });
+document.addEventListener('click', e => {
+  // Click on the overlay itself (not the inner card) dismisses the dialog.
+  if(e.target.classList && e.target.classList.contains('modal') && e.target.classList.contains('open')){
+    closeModal(e.target.id);
+  }
+});
 
 function exportCSV(filename, rows){
   const csv = rows.map(r=>r.map(c=>{
