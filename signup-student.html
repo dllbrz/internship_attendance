@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Create Intern Account — Naic OJT</title>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+<div class="auth-wrap">
+  <aside class="auth-visual">
+    <a href="index.html" class="brand" style="text-decoration:none">
+      <div class="brand-badge"><img src="assets/naic-engineering-logo.png" alt="Naic Engineering Office seal"></div>
+      <div class="brand-text"><small>Attendance System</small><strong>Municipality of Naic</strong></div>
+    </a>
+    <h2>Start your OJT journey <span>with us.</span></h2>
+    <div class="quote">Create your intern account to begin logging your hours.</div>
+  </aside>
+  <section class="auth-form">
+    <div class="auth-form-inner" style="max-width:560px">
+      <h1>Create Account</h1>
+      <p class="sub">Register as a new OJT intern. Your account is automatically recognized once registered.</p>
+      <form id="regForm">
+        <div class="form-group"><label>Full Name *</label><input class="form-control" id="name" required></div>
+        <div class="form-row">
+          <div class="form-group"><label>Username *</label><input class="form-control" id="username" required></div>
+          <div class="form-group"><label>Email *</label><input class="form-control" type="email" id="email" required></div>
+        </div>
+        <div class="form-group"><label>Password * (min 6 chars)</label><input class="form-control" type="password" id="password" required minlength="6"></div>
+        <div class="form-row">
+          <div class="form-group"><label>Phone</label><input class="form-control" id="phone" required placeholder="09XX-XXX-XXXX"></div>
+          <div class="form-group"><label>Address</label><input class="form-control" id="address" required></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label>School</label><input class="form-control" id="school" required></div>
+          <div class="form-group"><label>Course</label><input class="form-control" id="course" required></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label>OJT Adviser Name</label><input class="form-control" id="adviser_name" required></div>
+          <div class="form-group"><label>OJT Adviser Contact</label><input class="form-control" id="adviser_contact" required></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label>Start Date</label><input class="form-control" type="date" id="start_date" required></div>
+          <div class="form-group"><label>End Date</label><input class="form-control" type="date" id="end_date" required></div>
+        </div>
+        <div class="form-group"><label>Required Hours</label><input class="form-control" type="number" id="required_hours" required value="486"></div>
+        <div class="form-error" id="err"></div>
+        <div class="form-success" id="ok">Account created. Check your email for the confirmation code.</div>
+        <button class="btn btn-primary btn-block" type="submit" id="btn">Create Account</button>
+      </form>
+
+      <form id="verifyForm" class="auth-panel hidden">
+        <h2>Verify your email</h2>
+        <p class="sub">Enter the confirmation code sent to your email to activate your intern account.</p>
+        <div class="form-group"><label>Email</label><input class="form-control" type="email" id="verify_email" required></div>
+        <div class="form-group"><label>Confirmation code</label><input class="form-control otp-input" id="verify_code" inputmode="numeric" autocomplete="one-time-code" required placeholder="6-digit code"></div>
+        <div class="form-error" id="verify_err"></div>
+        <button class="btn btn-primary btn-block" type="submit" id="verify_btn">Verify Account</button>
+        <button class="btn btn-ghost btn-block mt-2" type="button" id="resend_btn">Resend code</button>
+      </form>
+      <div class="auth-switch">Already have an account? <a href="login-student.html">Sign in</a></div>
+    </div>
+  </section>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="js/supabase-config.js"></script>
+<script src="js/data.js"></script>
+<script>
+document.getElementById('regForm').addEventListener('submit', async (e)=>{
+  e.preventDefault();
+  const btn=document.getElementById('btn'); btn.disabled=true; btn.textContent='Creating…';
+  const err=document.getElementById('err'); err.classList.remove('show');
+  const ok=document.getElementById('ok'); ok.classList.remove('show');
+  const data={};
+  ['name','username','password','email','phone','address','school','course','adviser_name','adviser_contact','start_date','end_date','required_hours']
+    .forEach(k=>data[k]=document.getElementById(k).value.trim());
+  const r = await registerStudent(data);
+  if(!r.ok){ err.textContent=r.error; err.classList.add('show'); btn.disabled=false; btn.textContent='Create Account'; return; }
+  ok.classList.add('show');
+  document.getElementById('verify_email').value = data.email;
+  document.getElementById('regForm').classList.add('hidden');
+  document.getElementById('verifyForm').classList.remove('hidden');
+});
+
+document.getElementById('verifyForm').addEventListener('submit', async (e)=>{
+  e.preventDefault();
+  const btn=document.getElementById('verify_btn'); btn.disabled=true; btn.textContent='Verifying…';
+  const err=document.getElementById('verify_err'); err.classList.remove('show');
+  const r = await verifySignupOtp(document.getElementById('verify_email').value, document.getElementById('verify_code').value);
+  if(!r.ok){ err.textContent=r.error; err.classList.add('show'); btn.disabled=false; btn.textContent='Verify Account'; return; }
+  window.location.href='login-student.html?verified=1';
+});
+
+document.getElementById('resend_btn').addEventListener('click', async ()=>{
+  const btn=document.getElementById('resend_btn'); btn.disabled=true; btn.textContent='Sending…';
+  const err=document.getElementById('verify_err'); err.classList.remove('show');
+  const r = await resendSignupOtp(document.getElementById('verify_email').value);
+  if(!r.ok){ err.textContent=r.error; err.classList.add('show'); }
+  else { toast('Confirmation code sent again.','success'); }
+  btn.disabled=false; btn.textContent='Resend code';
+});
+</script>
+</body>
+</html>

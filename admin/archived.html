@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Archived — Admin · Naic OJT</title>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../css/styles.css">
+</head>
+<body>
+<div class="app-shell" id="shell"><div style="padding:40px;text-align:center">Loading…</div></div>
+
+<!-- Profile view (read-only) modal -->
+<div class="modal-backdrop" id="profileModal"><div class="modal" style="max-width:520px">
+  <div class="modal-head"><h3>Student Profile</h3><button class="close-btn" onclick="closeModal('profileModal')"></button></div>
+  <div class="modal-body" id="profileBody"></div>
+  <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModal('profileModal')">Close</button></div>
+</div></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../js/supabase-config.js"></script>
+<script src="../js/data.js"></script>
+<script src="../js/app.js"></script>
+<script>
+async function render(){
+  await requireAdmin();
+  const db=getDB();
+  // Strictly students who have completed their OJT (rendered >= required hours)
+  const list=db.students.filter(s=>totalHours(s.id) >= s.required_hours);
+
+  document.getElementById('shell').innerHTML = renderSidebar('admin','archived') + `
+    <main class="main">
+      ${renderTopbar('Archived','Interns who have completed their OJT.')}
+      <div class="card">
+        <div class="table-wrap"><table><thead><tr>
+        <th>ID</th><th>Name</th><th>School</th><th>Period</th><th>Rendered</th><th style="text-align:right">Actions</th></tr></thead>
+        <tbody>${list.map(s=>{const done=totalHours(s.id);
+          return `<tr><td><strong>${s.id}</strong></td>
+          <td>${s.name}<div class="text-muted text-sm">@${s.username} · ${s.course||''}</div></td>
+          <td>${s.school||'—'}</td>
+          <td class="text-sm">${fmtDate(s.start_date)}<br><span class="text-muted">to ${fmtDate(s.end_date)}</span></td>
+          <td><span class="pill green">${done}/${s.required_hours} hrs</span></td>
+          <td style="text-align:right"><button class="btn btn-outline btn-sm" onclick="showProfile('${s.id}')">View</button></td>
+          </tr>`;}).join('') || '<tr><td colspan="6" class="text-center text-muted" style="padding:24px">No interns have completed their OJT yet.</td></tr>'}</tbody></table></div>
+      </div>
+    </main>`;
+  startClock('#clockBox');
+}
+function showProfile(id){
+  const s=getDB().students.find(x=>x.id===id); if(!s) return;
+  const done=totalHours(s.id);
+  document.getElementById('profileBody').innerHTML=`
+    <div class="profile-view">
+      <div class="pv-row"><span>Intern ID</span><strong>${s.id}</strong></div>
+      <div class="pv-row"><span>Full Name</span><strong>${s.name}</strong></div>
+      <div class="pv-row"><span>Username</span><strong>@${s.username}</strong></div>
+      <div class="pv-row"><span>Email</span><strong>${s.email||'—'}</strong></div>
+      <div class="pv-row"><span>Phone</span><strong>${s.phone||'—'}</strong></div>
+      <div class="pv-row"><span>School</span><strong>${s.school||'—'}</strong></div>
+      <div class="pv-row"><span>Course</span><strong>${s.course||'—'}</strong></div>
+      <div class="pv-row"><span>OJT Adviser</span><strong>${s.adviser_name||'—'}</strong></div>
+      <div class="pv-row"><span>Adviser Contact</span><strong>${s.adviser_contact||'—'}</strong></div>
+      <div class="pv-row"><span>OJT Period</span><strong>${fmtDate(s.start_date)} – ${fmtDate(s.end_date)}</strong></div>
+      <div class="pv-row"><span>Required Hours</span><strong>${s.required_hours} hrs</strong></div>
+      <div class="pv-row"><span>Rendered Hours</span><strong>${done} hrs</strong></div>
+    </div>`;
+  openModal('profileModal');
+}
+render();
+</script>
+</body></html>
