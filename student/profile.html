@@ -13,6 +13,8 @@
 <script src="../js/data.js"></script>
 <script src="../js/app.js"></script>
 <script src="https://cdn.jsdelivr.net/gh/davidshimjs/qrcodejs/qrcode.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.1/jspdf.plugin.autotable.min.js"></script>
 <script>
 let ME = null;
 
@@ -32,19 +34,19 @@ async function render(){
           <div class="text-sm" style="font-weight:600;color:var(--blue-800);margin-top:2px">
             Diploma in Information Technology
           </div>
-          <div class="mt-4">
-            <input type="file" id="pic" accept="image/*" style="display:none" onchange="uploadPic(event)">
-            <button class="btn btn-outline btn-sm" onclick="document.getElementById('pic').click()">Change Photo</button>
+          <div class="mt-4" style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
+            <button class="btn btn-outline btn-sm" onclick="openModal('picModal')">Change Photo</button>
             <button class="btn btn-primary btn-sm" onclick="openEdit()">Edit Profile</button>
+            <button class="btn btn-yellow btn-sm" onclick="generateTimeCard()">Generate Time Card</button>
           </div>
           <hr style="margin:20px 0;border:none;border-top:1px solid var(--gray-200)">
           <div style="text-align:left">
             <div class="text-muted text-sm">Required Hours</div><div style="font-weight:700;color:var(--blue-800)">${u.required_hours} hrs</div>
             <div class="text-muted text-sm mt-2">OJT Period</div><div style="font-weight:600">${fmtDate(u.start_date)} – ${fmtDate(u.end_date)}</div>
-            <div class="text-muted text-sm mt-2">School</div><div style="font-weight:600" id="v_school">${u.school||'—'}</div>
-            <div class="text-muted text-sm mt-2">Course</div><div style="font-weight:600" id="v_course">${u.course||'—'}</div>
-            <div class="text-muted text-sm mt-2">OJT Adviser</div><div style="font-weight:600" id="v_adv">${u.adviser_name||'—'}</div>
-            <div class="text-muted text-sm">Adviser Contact</div><div style="font-weight:600" id="v_advc">${u.adviser_contact||'—'}</div>
+            <div class="text-muted text-sm mt-2">School</div><div style="font-weight:600">${u.school||'—'}</div>
+            <div class="text-muted text-sm mt-2">Course</div><div style="font-weight:600">${u.course||'—'}</div>
+            <div class="text-muted text-sm mt-2">OJT Adviser</div><div style="font-weight:600">${u.adviser_name||'—'}</div>
+            <div class="text-muted text-sm">Adviser Contact</div><div style="font-weight:600">${u.adviser_contact||'—'}</div>
           </div>
           <hr style="margin:20px 0;border:none;border-top:1px solid var(--gray-200)">
           <div class="qr-display">
@@ -60,8 +62,8 @@ async function render(){
         <div class="card">
           <div class="card-title">Personal Information</div>
           <div class="text-muted text-sm">Email</div><div style="font-weight:600">${u.email||'—'}</div>
-          <div class="text-muted text-sm mt-2">Phone</div><div style="font-weight:600" id="v_phone">${u.phone||'—'}</div>
-          <div class="text-muted text-sm mt-2">Address</div><div style="font-weight:600" id="v_addr">${u.address||'—'}</div>
+          <div class="text-muted text-sm mt-2">Phone</div><div style="font-weight:600">${u.phone||'—'}</div>
+          <div class="text-muted text-sm mt-2">Address</div><div style="font-weight:600">${u.address||'—'}</div>
 
           <hr style="margin:18px 0;border:none;border-top:1px solid var(--gray-200)">
           <div class="card-title">Progress</div>
@@ -75,13 +77,26 @@ async function render(){
       </div>
     </main>
 
+    <!-- Profile picture options modal -->
+    <div class="modal" id="picModal">
+      <div class="modal-inner" style="max-width:400px">
+        <div class="modal-head"><h3>Profile Picture</h3><button class="close-x" onclick="closeModal('picModal')">×</button></div>
+        <div class="modal-body">
+          <div class="view-menu">
+            <input type="file" id="picFile" accept="image/*" style="display:none" onchange="uploadPic(event)">
+            <button onclick="document.getElementById('picFile').click()">Upload / Change Photo</button>
+            <button class="danger" onclick="removePic()" ${ME && ME.avatar ? '' : 'disabled'}>Delete Photo</button>
+          </div>
+          <p class="text-muted text-sm mt-3">Photos should be a clear headshot. JPG or PNG, under 2 MB works best.</p>
+        </div>
+        <div class="modal-foot"><button class="btn btn-outline" onclick="closeModal('picModal')">Close</button></div>
+      </div>
+    </div>
+
     <!-- Edit profile modal -->
     <div class="modal" id="editModal">
       <div class="modal-inner" style="max-width:520px">
-        <div class="modal-head">
-          <h3>Edit My Profile</h3>
-          <button class="close-x" onclick="closeModal('editModal')">×</button>
-        </div>
+        <div class="modal-head"><h3>Edit My Profile</h3><button class="close-x" onclick="closeModal('editModal')">×</button></div>
         <div class="modal-body">
           <div class="form-group"><label>Full Name</label><input class="form-control" id="f_name"></div>
           <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
@@ -134,9 +149,7 @@ function downloadQR(filename){
   if(!holder){ toast('QR not ready yet.','error'); return; }
   const canvas = holder.querySelector('canvas');
   const img = holder.querySelector('img');
-  let dataUrl = null;
-  if(canvas){ dataUrl = canvas.toDataURL('image/png'); }
-  else if(img){ dataUrl = img.src; }
+  let dataUrl = canvas ? canvas.toDataURL('image/png') : (img ? img.src : null);
   if(!dataUrl){ toast('QR not ready yet.','error'); return; }
   const a = document.createElement('a');
   a.href = dataUrl; a.download = (filename||'qr-code')+'.png';
@@ -145,12 +158,92 @@ function downloadQR(filename){
 }
 async function uploadPic(e){
   const f = e.target.files[0]; if(!f) return;
+  if(f.size > 5*1024*1024){ toast('Image too large (max 5 MB).','error'); return; }
   toast('Uploading…','info');
   const r = await uploadAvatar(f);
   if(!r.ok){ toast(r.error,'error'); return; }
-  toast('Photo updated.','success');
-  render();
+  closeModal('picModal');
+  toast('Photo updated.','success'); render();
 }
+async function removePic(){
+  if(!confirm('Delete your profile photo? This will restore the default avatar.')) return;
+  const r = await deleteOwnAvatar();
+  if(!r.ok){ toast(r.error,'error'); return; }
+  closeModal('picModal');
+  toast('Photo removed.','success'); render();
+}
+
+// ---------- PRINTABLE TIME CARD (PDF) ----------
+function generateTimeCard(){
+  const u = ME; if(!u){ toast('Not ready','error'); return; }
+  if(!window.jspdf || !window.jspdf.jsPDF){ toast('PDF library still loading. Try again.','error'); return; }
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit:'pt', format:'letter' });
+  const W = doc.internal.pageSize.getWidth();
+
+  // Header
+  doc.setFillColor(10,31,68); doc.rect(0,0,W,64,'F');
+  doc.setTextColor(253,194,43); doc.setFontSize(16); doc.text('OJT Intern Time Card', 40, 30);
+  doc.setTextColor(255,255,255); doc.setFontSize(10);
+  doc.text('Municipality of Naic, Cavite — Office of the Municipal Engineer', 40, 48);
+
+  // Intern info block
+  doc.setTextColor(20,20,20); doc.setFontSize(11);
+  let y = 92;
+  const line = (label, value) => {
+    doc.setFont(undefined,'bold'); doc.text(label, 40, y);
+    doc.setFont(undefined,'normal'); doc.text(String(value||'—'), 170, y);
+    y += 16;
+  };
+  line('Intern Name:', u.name);
+  line('Intern ID:', u.id);
+  line('School:', u.school);
+  line('Course:', u.course);
+  line('OJT Adviser:', u.adviser_name);
+  line('Adviser Contact:', u.adviser_contact);
+  line('OJT Period:', `${fmtDate(u.start_date)}  —  ${fmtDate(u.end_date)}`);
+  line('Required Hours:', `${u.required_hours} hours`);
+
+  // Summary
+  const list = studentAttendance(u.id).slice().reverse(); // chronological
+  const rendered = totalHours(u.id);
+  const present = list.filter(r=>r.status==='present').length;
+  const late = list.filter(r=>r.status==='late').length;
+  const absent = list.filter(r=>r.status==='absent').length;
+
+  y += 6;
+  doc.setDrawColor(210,215,225); doc.line(40, y, W-40, y); y += 14;
+  doc.setFont(undefined,'bold'); doc.text('Summary', 40, y); doc.setFont(undefined,'normal'); y += 14;
+  doc.text(`Hours Rendered: ${rendered} / ${u.required_hours}    Present: ${present}    Late: ${late}    Absent: ${absent}`, 40, y);
+  y += 12;
+
+  const body = list.map(r => [ fmtDate(r.date), fmt12(r.time_in), fmt12(r.time_out), (r.hours||0).toString(), (r.status||'').toUpperCase() ]);
+  doc.autoTable({
+    startY: y + 6,
+    head: [['Date','Time In','Time Out','Hours','Status']],
+    body: body.length ? body : [['—','—','—','—','No records']],
+    theme:'grid',
+    headStyles:{ fillColor:[13,43,107], textColor:255, fontSize:10 },
+    styles:{ fontSize:9, cellPadding:5 },
+    alternateRowStyles:{ fillColor:[242,247,255] }
+  });
+
+  // Signatures
+  const endY = doc.lastAutoTable.finalY + 40;
+  doc.setFontSize(10);
+  doc.line(60, endY, 240, endY);
+  doc.line(W-240, endY, W-60, endY);
+  doc.text('Intern Signature', 110, endY+14);
+  doc.text('OJT Adviser Signature', W-200, endY+14);
+
+  doc.setFontSize(8); doc.setTextColor(120,120,120);
+  doc.text('Generated on '+new Date().toLocaleString()+' — Naic OJT Attendance System', 40, doc.internal.pageSize.getHeight()-24);
+
+  const filename = `time-card-${u.id}.pdf`;
+  doc.save(filename);
+  toast('Time card generated.','success');
+}
+
 render();
 </script>
 </body>
