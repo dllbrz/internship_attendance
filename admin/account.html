@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Account — Admin · Naic OJT</title>
+<title>Scanner — Admin · Naic OJT</title>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="../css/styles.css">
 </head>
@@ -11,105 +11,218 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="../js/supabase-config.js"></script>
 <script src="../js/data.js"></script>
+<script src="../js/app.js"></script>
+<script src="https://unpkg.com/html5-qrcode@2.3.10/html5-qrcode.min.js"></script>
 <script>
-let CURRENT_ADMIN = null;
-let ADMINS = [];
+let scanner = null;
+let lastScannedAt = 0;
+let cameraStarted = false;
+let permissionState = 'unknown'; // 'granted' | 'denied' | 'prompt' | 'unknown'
 
 async function render(){
-  CURRENT_ADMIN = await requireAdmin();
-  if(!CURRENT_ADMIN) return;
-
-  document.getElementById('shell').innerHTML = renderSidebar('admin','account') + `
+  const admin = await requireAdmin(); if(!admin) return;
+  const sch = getOfficeSchedule();
+  document.getElementById('shell').innerHTML = renderSidebar('admin','scanner') + `
     <main class="main">
-      ${renderTopbar('Account Settings','Change your password and manage administrators.')}
+      ${renderTopbar('QR Scanner', 'Scan an intern QR to record Time In. Late/Absent are computed from the schedule below.')}
+
+      <div class="card">
+        <div class="card-title" style="margin-bottom:8px">Office / Shift Schedule</div>
+        <div class="scanner-settings">
+          <div class="form-group"><label>Default Start Time</label>
+            <input type="time" class="form-control" id="s_start" value="${sch.start_time}"></div>
+          <div class="form-group"><label>Grace (min) — Late threshold</label>
+            <input type="number" class="form-control" id="s_grace" min="0" max="120" value="${sch.grace_minutes}"></div>
+          <div class="form-group"><label>Absent after (min)</label>
+            <input type="number" class="form-control" id="s_absent" min="15" max="480" value="${sch.absent_after_minutes}"></div>
+          <button class="btn btn-primary" onclick="saveSchedule()">Save Schedule</button>
+        </div>
+        <p class="text-sm text-muted" style="margin:6px 0 0">
+          Present: on-time or within grace. Late: after grace. Absent: check-in exceeds
+          <strong>Absent after</strong> minutes past the start time (default 1 hour).
+        </p>
+      </div>
+
       <div class="card-grid-2">
         <div class="card">
-          <div class="card-head"><div class="card-title">Change Password</div></div>
-          <form onsubmit="chPass(event)">
-            <div class="form-row">
-              <div class="form-group"><label>New Password</label><input class="form-control" type="password" id="n1" required minlength="8"></div>
-              <div class="form-group"><label>Confirm</label><input class="form-control" type="password" id="n2" required minlength="8"></div>
-            </div>
-            <p class="text-muted text-sm">Minimum 8 characters. You'll stay signed in.</p>
-            <button class="btn btn-primary">Update Password</button>
-          </form>
+          <div class="card-title">Camera</div>
+          <div id="permBanner" class="camera-msg" style="display:none;background:#fff8e1;color:#8a6d0f;border:1px solid #f2d97a;padding:10px 12px;border-radius:8px;margin-bottom:10px"></div>
+          <div id="reader" style="width:100%;max-width:420px;margin:0 auto"></div>
+          <div id="camMsg" class="camera-msg" style="display:none"></div>
+          <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+            <button class="btn btn-primary btn-sm" id="startCamBtn" onclick="requestAndStart()">Enable Camera</button>
+            <button class="btn btn-outline btn-sm" onclick="stopCamera()">Stop Camera</button>
+          </div>
+          <div class="text-muted text-sm mt-2">Or enter Intern ID manually:</div>
+          <div style="display:flex;gap:8px;margin-top:6px">
+            <input class="form-control" id="manual" placeholder="OJT-2025-001">
+            <button class="btn btn-primary" onclick="scanManual()">Scan</button>
+          </div>
         </div>
         <div class="card">
-          <div class="card-head"><div class="card-title">Add Admin</div></div>
-          <form onsubmit="addAdmin(event)">
-            <div class="form-group"><label>Full Name</label><input class="form-control" id="an" required></div>
-            <div class="form-row">
-              <div class="form-group"><label>Email</label><input class="form-control" type="email" id="ae" required placeholder="name@naic.gov.ph"></div>
-              <div class="form-group"><label>Password</label><input class="form-control" type="password" id="ap" required minlength="8"></div>
-            </div>
-            <p class="text-muted text-sm">Creates a confirmed Supabase Auth user and grants the <code>admin</code> role.</p>
-            <button class="btn btn-yellow" id="addAdminBtn">Add Administrator</button>
-          </form>
+          <div class="card-title">Today's Scans</div>
+          <div class="table-wrap">
+            <table class="table">
+              <thead><tr><th>Intern ID</th><th>Name</th><th>Time In</th><th>Status</th></tr></thead>
+              <tbody id="log"></tbody>
+            </table>
+          </div>
         </div>
-      </div>
-      <div class="card">
-        <div class="card-head">
-          <div class="card-title">Administrators</div>
-          <button class="btn btn-ghost btn-sm" onclick="loadAdmins()">Refresh</button>
-        </div>
-        <div class="table-wrap" id="adminTable"><div class="text-muted p-4">Loading…</div></div>
       </div>
     </main>`;
   startClock('#clockBox');
-  await loadAdmins();
+  drawLog();
+  await checkPermission();
 }
 
-async function loadAdmins(){
-  const wrap = document.getElementById('adminTable');
-  wrap.innerHTML = '<div class="text-muted p-4">Loading…</div>';
-  const r = await adminManage('list');
-  if(!r.ok){ wrap.innerHTML = `<div class="p-4" style="color:var(--red)">${r.error}</div>`; return; }
-  ADMINS = r.data.admins || [];
-  wrap.innerHTML = `<table>
-    <thead><tr><th>Name</th><th>Email</th><th>Created</th><th>Role</th><th style="text-align:right">Action</th></tr></thead>
-    <tbody>${ADMINS.map(a=>`
-      <tr>
-        <td>${escapeHtml(a.name)}</td>
-        <td>${escapeHtml(a.email)}</td>
-        <td>${new Date(a.created_at).toLocaleDateString()}</td>
-        <td><span class="pill blue">Admin</span></td>
-        <td style="text-align:right">${a.is_self
-          ? '<span class="text-muted text-sm">You</span>'
-          : `<button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="delAdmin('${a.id}','${escapeHtml(a.email)}')">Remove</button>`}</td>
-      </tr>`).join('')}</tbody></table>`;
+function saveSchedule(){
+  const start = document.getElementById('s_start').value || '08:00';
+  const grace = +document.getElementById('s_grace').value || 0;
+  const absent = +document.getElementById('s_absent').value || 60;
+  setOfficeSchedule({ start_time:start, grace_minutes:grace, absent_after_minutes:absent });
+  toast('Schedule saved.','success');
 }
 
-async function chPass(e){
-  e.preventDefault();
-  if(n1.value !== n2.value){ toast('Passwords do not match','error'); return; }
-  const r = await updateCurrentPassword(n1.value);
+function setPermBanner(html, kind){
+  const el = document.getElementById('permBanner');
+  if(!html){ el.style.display='none'; return; }
+  el.style.display = 'block';
+  el.innerHTML = html;
+  el.style.background = kind==='error' ? '#fdecea' : kind==='ok' ? '#e6f4ea' : '#fff8e1';
+  el.style.color = kind==='error' ? '#8a1c1c' : kind==='ok' ? '#0f5132' : '#8a6d0f';
+  el.style.borderColor = kind==='error' ? '#f2b1ac' : kind==='ok' ? '#a7d7b6' : '#f2d97a';
+}
+
+// Explicit permission check before any camera access.
+async function checkPermission(){
+  // Secure context requirement — camera APIs are blocked over plain HTTP.
+  if(!window.isSecureContext){
+    setPermBanner('Camera requires a secure connection. Open this page over <strong>https://</strong> or <strong>localhost</strong> to enable scanning.', 'error');
+    return;
+  }
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+    setPermBanner('This browser does not support camera access.', 'error');
+    return;
+  }
+  try {
+    if(navigator.permissions && navigator.permissions.query){
+      const st = await navigator.permissions.query({ name:'camera' });
+      permissionState = st.state;
+      applyPermState();
+      st.onchange = () => { permissionState = st.state; applyPermState(); };
+      return;
+    }
+  } catch(_){}
+  permissionState = 'prompt';
+  applyPermState();
+}
+
+function applyPermState(){
+  const btn = document.getElementById('startCamBtn');
+  if(permissionState === 'granted'){
+    setPermBanner('Camera permission granted. Click <strong>Enable Camera</strong> to start scanning.', 'ok');
+    if(btn) btn.textContent = 'Enable Camera';
+  } else if(permissionState === 'denied'){
+    setPermBanner('Camera access is <strong>blocked</strong> for this site. Click the camera icon in your browser\'s address bar (or open Site Settings) to allow the camera, then reload this page.', 'error');
+    if(btn){ btn.textContent = 'Camera Blocked'; btn.disabled = true; }
+  } else {
+    setPermBanner('Click <strong>Enable Camera</strong> and allow camera access when your browser asks.', 'warn');
+    if(btn){ btn.textContent = 'Enable Camera'; btn.disabled = false; }
+  }
+}
+
+async function requestAndStart(){
+  if(permissionState === 'denied'){
+    toast('Camera is blocked. Update site settings in your browser, then reload.', 'error');
+    return;
+  }
+  // Explicit permission prompt via getUserMedia — required user gesture.
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    // Release the probe stream immediately; html5-qrcode manages its own.
+    stream.getTracks().forEach(t => t.stop());
+    permissionState = 'granted';
+    applyPermState();
+    await startCamera();
+  } catch(e){
+    const err = String(e && e.message || e);
+    if(/NotAllowed|Permission/i.test(err)){
+      permissionState = 'denied';
+      applyPermState();
+    } else if(/NotFound|no device/i.test(err)){
+      setPermBanner('No camera detected on this device.', 'error');
+    } else {
+      setPermBanner('Cannot access camera: '+err, 'error');
+    }
+  }
+}
+
+async function startCamera(){
+  const msg = document.getElementById('camMsg');
+  msg.style.display = 'none';
+  try {
+    if(!scanner) scanner = new Html5Qrcode('reader');
+    if(cameraStarted) return;
+    try {
+      await scanner.start({ facingMode:{ exact:'environment' } }, { fps:10, qrbox:250 }, onScan, ()=>{});
+    } catch(_){
+      await scanner.start({ facingMode:'environment' }, { fps:10, qrbox:250 }, onScan, ()=>{});
+    }
+    cameraStarted = true;
+    const b = document.getElementById('startCamBtn'); if(b) b.textContent = 'Camera Active';
+  } catch(e){
+    msg.style.display = 'block';
+    msg.textContent = 'Cannot start camera: '+(e && e.message || e);
+  }
+}
+async function stopCamera(){
+  try {
+    if(scanner && cameraStarted){
+      await scanner.stop(); await scanner.clear(); cameraStarted=false;
+      const b = document.getElementById('startCamBtn'); if(b && !b.disabled) b.textContent = 'Enable Camera';
+    }
+  } catch(_){}
+}
+
+async function onScan(text){
+  const now = Date.now();
+  if(now - lastScannedAt < 1500) return;
+  lastScannedAt = now;
+  const st = resolveQR(text);
+  if(!st){ toast('Unknown QR code','error'); return; }
+  const r = await markPresent(st.id);
   if(!r.ok){ toast(r.error,'error'); return; }
-  n1.value = ''; n2.value = '';
-  toast('Password changed','success');
+  if(r.already){ toast(`${st.name} already timed in.`,'info'); }
+  else { toast(`${st.name} — ${r.status.toUpperCase()} at ${fmt12(r.time)}`, r.status==='late'?'error':'success'); }
+  drawLog();
+}
+async function scanManual(){
+  const v = document.getElementById('manual').value.trim();
+  if(!v) return;
+  await onScan(v);
+  document.getElementById('manual').value = '';
 }
 
-async function addAdmin(e){
-  e.preventDefault();
-  const btn = document.getElementById('addAdminBtn');
-  btn.disabled = true; btn.textContent = 'Adding…';
-  const r = await adminManage('create', { full_name: an.value.trim(), email: ae.value.trim(), password: ap.value });
-  btn.disabled = false; btn.textContent = 'Add Administrator';
-  if(!r.ok){ toast(r.error,'error'); return; }
-  an.value = ''; ae.value = ''; ap.value = '';
-  toast('Administrator added','success');
-  await loadAdmins();
+function drawLog(){
+  const today = todayStr();
+  const rows = window.__DB__.attendance
+    .filter(a=>a.date===today && a.time_in)
+    .map(a=>{
+      const s = window.__DB__.students.find(x=>x.id===a.student_id);
+      return { id:a.student_id, name:s?.name||'—', time_in:a.time_in, status:a.status };
+    })
+    .sort((a,b)=>b.time_in.localeCompare(a.time_in));
+  document.getElementById('log').innerHTML = rows.map(r=>`
+    <tr>
+      <td style="font-weight:700;color:var(--blue-800)">${r.id}</td>
+      <td>${r.name}</td>
+      <td>${fmt12(r.time_in)}</td>
+      <td><span class="badge badge-${r.status}">${r.status.charAt(0).toUpperCase()+r.status.slice(1)}</span></td>
+    </tr>`).join('') || '<tr><td colspan="4" style="text-align:center;color:#888;padding:16px">No scans yet today.</td></tr>';
 }
-
-async function delAdmin(userId, email){
-  if(!confirm(`Delete admin ${email}? This removes their Supabase Auth account.`)) return;
-  const r = await adminManage('delete', { user_id: userId });
-  if(!r.ok){ toast(r.error,'error'); return; }
-  toast('Administrator removed','success');
-  await loadAdmins();
-}
-
-function escapeHtml(s){ return String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
 render();
+window.addEventListener('beforeunload', stopCamera);
 </script>
-</body></html>
+</body>
+</html>
