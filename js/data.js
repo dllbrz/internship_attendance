@@ -136,7 +136,16 @@ async function bootstrap(){
 
   // current user
   if(isAdmin){
-    window.__DB__.currentUser = { id:'A001', name: session.user.email || 'Administrator', role:'Admin', email: session.user.email };
+    const md = session.user.user_metadata || {};
+    window.__DB__.currentUser = {
+      id:'A001',
+      name: md.full_name || md.name || session.user.email || 'Administrator',
+      role:'Admin',
+      email: session.user.email,
+      avatar: md.avatar_url || null,
+      avatar_url: md.avatar_url || null,
+      auth_id: userId
+    };
     window.__DB__.session = { type:'admin', id:'A001', auth_id:userId };
     window.__DB__.admins = [window.__DB__.currentUser];
   } else {
@@ -414,7 +423,7 @@ async function updateStudent(studentInternId, patch){
   // Admin can only edit start_date, end_date, required_hours (enforced by UI)
   const st = window.__DB__.students.find(s=>s.id===studentInternId);
   if(!st) return {ok:false, error:'Not found'};
-  const allowed = ['start_date','end_date','required_hours','active','expected_time_in','full_name','avatar_url'];
+  const allowed = ['start_date','end_date','required_hours','active','expected_time_in','full_name','avatar_url','phone','address','school','course','adviser_name','adviser_contact'];
   const upd = {};
   for(const k of Object.keys(patch)){ if(allowed.includes(k)) upd[k]=patch[k]; }
   const { error } = await sb.from('profiles').update(upd).eq('id', st.auth_id);
@@ -427,7 +436,13 @@ async function updateStudent(studentInternId, patch){
     expected_time_in: upd.expected_time_in ?? st.expected_time_in,
     avatar: upd.avatar_url ?? st.avatar,
     avatar_url: upd.avatar_url ?? st.avatar_url,
-    name: upd.full_name ?? st.name
+    name: upd.full_name ?? st.name,
+    phone: upd.phone ?? st.phone,
+    address: upd.address ?? st.address,
+    school: upd.school ?? st.school,
+    course: upd.course ?? st.course,
+    adviser_name: upd.adviser_name ?? st.adviser_name,
+    adviser_contact: upd.adviser_contact ?? st.adviser_contact
   });
   return {ok:true};
 }
@@ -663,4 +678,61 @@ async function deleteAnnouncement(id){
   if(error) return {ok:false, error:error.message};
   window.__DB__.announcements = window.__DB__.announcements.filter(a=>a.id!==id);
   return {ok:true};
+}
+
+// ============================================================================
+// DELETE OWN AVATAR (student clears their profile picture)
+// ============================================================================
+async function deleteOwnAvatar(){
+  const { data:{user} } = await sb.auth.getUser();
+  if(!user) return {ok:false, error:'Not signed in'};
+  // Attempt to remove common file variants; ignore per-file errors.
+  try { await sb.storage.from('avatars').remove(['png','jpg','jpeg','webp','gif'].map(x=>`${user.id}/avatar.${x}`)); } catch(_){}
+  const { error } = await sb.from('profiles').update({ avatar_url:null }).eq('id', user.id);
+  if(error) return {ok:false, error:error.message};
+  if(window.__DB__.currentUser){ window.__DB__.currentUser.avatar=null; window.__DB__.currentUser.avatar_url=null; }
+  return {ok:true};
+}
+
+// ============================================================================
+// ADMIN SELF-EDIT (display name + avatar stored in auth user_metadata)
+// ============================================================================
+async function updateAdminSelf(patch){
+  const upd = {};
+  if(patch.full_name != null) upd.full_name = String(patch.full_name).trim();
+  if(patch.avatar_url != null) upd.avatar_url = patch.avatar_url;
+  const { data, error } = await sb.auth.updateUser({ data: upd });
+  if(error) return {ok:false, error:error.message};
+  const cu = window.__DB__.currentUser;
+  if(cu){
+    if(upd.full_name) cu.name = upd.full_name;
+    if('avatar_url' in upd){ cu.avatar = upd.avatar_url || null; cu.avatar_url = upd.avatar_url || null; }
+  }
+  return {ok:true, user:data?.user};
+}
+
+async function uploadAdminAvatar(file){
+  const { data:{user} } = await sb.auth.getUser();
+  if(!user) return {ok:false, error:'Not signed in'};
+  const ext = (file.name.split('.').pop()||'png').toLowerCase();
+  const path = `admin/${user.id}/avatar.${ext}`;
+  const { error } = await sb.storage.from('avatars').upload(path, file, { upsert:true, contentType:file.type });
+  if(error) return {ok:false, error:error.message};
+  const { data:pub } = sb.storage.from('avatars').getPublicUrl(path);
+  const url = pub.publicUrl + '?v=' + Date.now();
+  const r = await updateAdminSelf({ avatar_url:url });
+  if(!r.ok) return r;
+  return {ok:true, url};
+}
+
+async function deleteAdminAvatar(){
+  const r = await updateAdminSelf({ avatar_url:null });
+  return r;
+}
+
+// ============================================================================
+// UNARCHIVE (restore an archived intern back to active list)
+// ============================================================================
+async function unarchiveStudent(studentInternId){
+  return updateStudent(studentInternId, { active:true });
 }
