@@ -73,6 +73,8 @@ function renderSidebar(kind, active){
   const user = window.__DB__.currentUser || { name:'User', id:'', avatar:null };
   const initials = (user.name||'U').split(' ').map(x=>x[0]).slice(0,2).join('').toUpperCase();
   const avatarInner = user.avatar ? `<img src="${user.avatar}" alt="">` : initials;
+  // Bottom profile shortcut → sidebar Profile (student) / Account (admin)
+  const profileHref = kind==='student' ? 'profile.html' : 'account.html';
 
   return `
     <aside class="sidebar" id="sidebar">
@@ -90,11 +92,13 @@ function renderSidebar(kind, active){
         ).join('')}
       </nav>
       <div class="sidebar-foot">
-        <div class="avatar">${avatarInner}</div>
-        <div class="user-block">
-          <strong>${user.name}</strong>
-          <small>${kind==='student'?(user.id||''):'Admin'}</small>
-        </div>
+        <a href="${profileHref}" class="foot-profile" title="Open profile">
+          <div class="avatar">${avatarInner}</div>
+          <div class="user-block">
+            <strong>${user.name}</strong>
+            <small>${kind==='student'?(user.id||''):'Admin'}</small>
+          </div>
+        </a>
         <button class="logout-btn logout-text" onclick="logout()" title="Log out">
           <span class="nav-icon">${ICONS.logout}</span> Log Out
         </button>
@@ -113,16 +117,7 @@ function toggleSidebar(force){
 }
 
 function renderTopbar(title,subtitle,extra=''){
-  const user = window.__DB__.currentUser || {};
-  const isStudent = window.__DB__.session && window.__DB__.session.type === 'student';
-  // Top-navbar profile shortcut next to logout — routes to sidebar Profile page for students.
-  const profileHref = isStudent ? 'profile.html' : 'account.html';
-  const profileShortcut = `
-    <a href="${profileHref}" class="topbar-profile" title="Profile">
-      ${profileIconHTML(user, 34)}
-    </a>
-    <button class="topbar-logout" onclick="logout()" title="Log out"><span class="nav-icon">${ICONS.logout}</span></button>
-  `;
+  // Top-right profile/logout removed — controls live at the bottom of the sidebar.
   return `
     <div class="topbar">
       <div class="topbar-left flex items-center gap-3">
@@ -136,7 +131,6 @@ function renderTopbar(title,subtitle,extra=''){
       <div class="topbar-right">
         ${extra}
         <div class="clock-box" id="clockBox"></div>
-        ${profileShortcut}
       </div>
     </div>
   `;
