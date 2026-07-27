@@ -78,25 +78,40 @@ async function render(){
     </main>
 
     <!-- Profile picture options modal -->
-    <div class="modal" id="picModal">
+    <div class="modal" id="picModal" role="dialog" aria-modal="true" aria-label="Profile picture options">
       <div class="modal-inner" style="max-width:400px">
-        <div class="modal-head"><h3>Profile Picture</h3><button class="close-x" onclick="closeModal('picModal')">×</button></div>
+        <div class="modal-head"><h3>Profile Picture</h3><button class="close-x" aria-label="Close" onclick="closeModal('picModal')">&times;</button></div>
         <div class="modal-body">
           <div class="view-menu">
             <input type="file" id="picFile" accept="image/*" style="display:none" onchange="uploadPic(event)">
-            <button onclick="document.getElementById('picFile').click()">Upload / Change Photo</button>
-            <button class="danger" onclick="removePic()" ${ME && ME.avatar ? '' : 'disabled'}>Delete Photo</button>
+            <button type="button" onclick="viewPhoto()" ${u.avatar ? '' : 'disabled'}>View Photo</button>
+            <button type="button" onclick="document.getElementById('picFile').click()">Change Photo</button>
+            <button type="button" class="danger" onclick="removePic()" ${u.avatar ? '' : 'disabled'}>Delete Photo</button>
           </div>
-          <p class="text-muted text-sm mt-3">Photos should be a clear headshot. JPG or PNG, under 2 MB works best.</p>
+          <p class="text-muted text-sm mt-3">Photos should be a clear headshot. JPG or PNG, under 5 MB works best.</p>
         </div>
         <div class="modal-foot"><button class="btn btn-outline" onclick="closeModal('picModal')">Close</button></div>
       </div>
     </div>
 
-    <!-- Edit profile modal -->
-    <div class="modal" id="editModal">
+    <!-- Photo viewer modal -->
+    <div class="modal" id="viewPicModal" role="dialog" aria-modal="true" aria-label="Profile photo">
       <div class="modal-inner" style="max-width:520px">
-        <div class="modal-head"><h3>Edit My Profile</h3><button class="close-x" onclick="closeModal('editModal')">×</button></div>
+        <div class="modal-head"><h3>My Photo</h3><button class="close-x" aria-label="Close" onclick="closeModal('viewPicModal')">&times;</button></div>
+        <div class="modal-body">
+          <img id="picPreview" class="photo-preview" alt="Your profile photo" src="">
+        </div>
+        <div class="modal-foot">
+          <button class="btn btn-outline" onclick="closeModal('viewPicModal')">Close</button>
+          <button class="btn btn-primary" onclick="closeModal('viewPicModal');openModal('picModal')">Photo Options</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Edit profile modal -->
+    <div class="modal" id="editModal" role="dialog" aria-modal="true" aria-label="Edit my profile">
+      <div class="modal-inner" style="max-width:520px">
+        <div class="modal-head"><h3>Edit My Profile</h3><button class="close-x" aria-label="Close" onclick="closeModal('editModal')">&times;</button></div>
         <div class="modal-body">
           <div class="form-group"><label>Full Name</label><input class="form-control" id="f_name"></div>
           <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
@@ -120,6 +135,14 @@ async function render(){
   startClock('#clockBox');
   new QRCode(document.getElementById('qr'), { text:u.qr_token, width:160, height:160, colorDark:'#0d2b6b', colorLight:'#fff' });
 }
+function viewPhoto(){
+  const src = (ME && (ME.avatar || ME.avatar_url)) || '';
+  if(!src){ toast('No photo uploaded yet.','info'); return; }
+  const img = document.getElementById('picPreview');
+  img.src = src;
+  closeModal('picModal');
+  openModal('viewPicModal');
+}
 function openEdit(){
   document.getElementById('f_name').value = ME.name || '';
   document.getElementById('f_phone').value = ME.phone || '';
@@ -140,8 +163,11 @@ async function saveProfile(){
     adviser_name: document.getElementById('f_adv').value.trim(),
     adviser_contact: document.getElementById('f_advc').value.trim(),
   };
+  const err = document.getElementById('f_err');
+  err.textContent = '';
+  if(!patch.full_name){ err.textContent = 'Full name is required.'; return; }
   const r = await updateOwnProfile(patch);
-  if(!r.ok){ document.getElementById('f_err').textContent = r.error; return; }
+  if(!r.ok){ err.textContent = r.error; return; }
   closeModal('editModal'); toast('Profile updated.','success'); render();
 }
 function downloadQR(filename){
