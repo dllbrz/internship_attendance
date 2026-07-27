@@ -575,6 +575,12 @@ async function adminManage(action, payload){
     if(error){
       // supabase-js wraps non-2xx responses in FunctionsHttpError; try to read the body
       let msg = error.message || 'Request failed';
+      // FunctionsFetchError = the edge function could not be reached at all
+      // (not deployed / offline). Give an actionable message instead of the
+      // opaque "Failed to send a request to the Edge Function".
+      if(/failed to send a request|fetch/i.test(msg)){
+        return { ok:false, error:'Admin management service is unavailable. Deploy the "admin-manage" edge function, then try again.' };
+      }
       try {
         if(error.context && typeof error.context.json === 'function'){
           const j = await error.context.json();
@@ -714,8 +720,14 @@ async function updateAdminSelf(patch){
 async function uploadAdminAvatar(file){
   const { data:{user} } = await sb.auth.getUser();
   if(!user) return {ok:false, error:'Not signed in'};
+  if(file.size > 5*1024*1024) return {ok:false, error:'Image is too large. Please use a file under 5 MB.'};
+  if(!/^image\//.test(file.type||'')) return {ok:false, error:'Please choose an image file (JPG or PNG).'};
   const ext = (file.name.split('.').pop()||'png').toLowerCase();
-  const path = `admin/${user.id}/avatar.${ext}`;
+  // FIX: the "avatars" storage policy requires the FIRST folder segment to equal
+  // auth.uid(). The old path was `admin/<uid>/...`, whose first segment is
+  // "admin", so every admin upload failed with
+  // "new row violates row-level security policy". Keep the uid first.
+  const path = `${user.id}/admin-avatar.${ext}`;
   const { error } = await sb.storage.from('avatars').upload(path, file, { upsert:true, contentType:file.type });
   if(error) return {ok:false, error:error.message};
   const { data:pub } = sb.storage.from('avatars').getPublicUrl(path);
