@@ -6,7 +6,6 @@
 // Actions (POST JSON body):
 //   { action: "list" }
 //   { action: "create", email, password, full_name }
-//   { action: "invite", email, full_name, redirect_to }
 //   { action: "delete", user_id }
 //
 // Caller must send Authorization: Bearer <access_token> of a signed-in admin.
