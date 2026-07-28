@@ -15,12 +15,28 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.1/jspdf.plugin.autotable.min.js"></script>
 <script>
+// The search box and the date picker share ONE display format (e.g. "Jan 05, 2026").
+// Picking a date fills the search box with that same formatted string.
 let dateQ='';
+
+function matchesDate(iso, q){
+  const term = String(q).toLowerCase().trim();
+  if(!term) return true;
+  return String(iso).toLowerCase().includes(term) ||
+         fmtDate(iso).toLowerCase().includes(term);
+}
+// Reverse-map a formatted query back to YYYY-MM-DD so the picker stays in sync.
+function isoOf(q){
+  if(!q) return '';
+  if(/^\d{4}-\d{2}-\d{2}$/.test(q)) return q;
+  const d = new Date(q);
+  return isNaN(d) ? '' : d.toISOString().slice(0,10);
+}
 async function render(){
   const user = await requireStudent(); if(!user) return;
   const today = getTodayAttendance(user.id);
   const all = studentAttendance(user.id);
-  const list = dateQ ? all.filter(a=>a.date.includes(dateQ)) : all;
+  const list = dateQ ? all.filter(a=>matchesDate(a.date, dateQ)) : all;
   const total = totalHours(user.id);
   const lateCount = all.filter(a=>a.status==='late').length;
   const presentCount = all.filter(a=>a.status==='present').length;
@@ -42,8 +58,10 @@ async function render(){
         <div class="card-head">
           <div><div class="card-title">Attendance History</div><div class="card-subtitle">${list.length} of ${all.length} record(s)</div></div>
           <div class="flex gap-2" style="flex-wrap:wrap">
-            <input class="form-control" id="dateSearch" style="width:200px" placeholder=" Search date (YYYY-MM-DD)">
-            <input class="form-control" id="datePick" type="date" style="width:170px">
+            <label class="sr-only" for="dateSearch">Search by date</label>
+            <input class="form-control" id="dateSearch" style="width:210px" placeholder="Search date (e.g. ${fmtDate(todayStr())})">
+            <label class="sr-only" for="datePick">Pick a date</label>
+            <input class="form-control" id="datePick" type="date" style="width:170px" value="${isoOf(dateQ)}">
             ${dateQ?`<button class="btn btn-ghost btn-sm" onclick="dateQ='';render()">Clear</button>`:''}
           </div>
         </div>
@@ -58,7 +76,11 @@ async function render(){
   ds.value=dateQ;
   ds.addEventListener('input',(e)=>{dateQ=e.target.value.trim();render();});
   if(dateQ){ds.focus();ds.setSelectionRange(ds.value.length,ds.value.length);}
-  document.getElementById('datePick').addEventListener('change',(e)=>{dateQ=e.target.value;render();});
+  // Normalise the picked date into the SAME display format as the table + search box.
+  document.getElementById('datePick').addEventListener('change',(e)=>{
+    dateQ = e.target.value ? fmtDate(e.target.value) : '';
+    render();
+  });
 }
 async function doIn(){ const u=await requireStudent(); const r=await timeIn(u.id); if(!r.ok){toast(r.error,'error');return;} toast('Timed in at '+fmt12(r.time)+'!','success'); render();}
 async function doOut(){ const u=await requireStudent(); const r=await timeOut(u.id); if(!r.ok){toast(r.error,'error');return;} toast('Timed out at '+fmt12(r.time)+' · +'+r.hours+' hrs','success'); render();}
