@@ -26,6 +26,11 @@ const ICONS = {
   statProgress:'<svg viewBox="0 0 24 24"><path d="M3 3h2v18H3zm4 10h4v8H7zm6-6h4v14h-4zm6-4h4v18h-4z"/></svg>',
   edit:        '<svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75zM20.71 7.04a1 1 0 0 0 0-1.41L18.37 3.29a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75z"/></svg>',
   eye:         '<svg viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5C21.27 7.61 17 4.5 12 4.5zm0 12A4.5 4.5 0 1 1 16.5 12 4.5 4.5 0 0 1 12 16.5zm0-7a2.5 2.5 0 1 0 2.5 2.5A2.5 2.5 0 0 0 12 9.5z"/></svg>',
+  // "File symbol" — opens the deleted/archived records drawer.
+  file:        '<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm3 18H7V4h6v5h4v11zM9 12h6v2H9zm0 4h6v2H9z"/></svg>',
+  restore:     '<svg viewBox="0 0 24 24"><path d="M13 3a9 9 0 0 0-9 9H1l3.9 3.9.1.2L9 12H6a7 7 0 1 1 2.05 4.95l-1.42 1.42A9 9 0 1 0 13 3zm-1 5v5l4.25 2.52.75-1.23-3.5-2.08V8z"/></svg>',
+  trash:       '<svg viewBox="0 0 24 24"><path d="M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>',
+  x:           '<svg viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>',
 };
 
 // Icon set for the 4 stat cards on a dashboard (in order: total, present, absent, late)
@@ -209,3 +214,86 @@ function printReport(title, tableHTML){
     <h3>${title}</h3>${tableHTML}</body></html>`);
   w.document.close(); w.focus(); setTimeout(()=>w.print(),400);
 }
+
+
+/* ============================================================================
+   Shared confirmation dialog.
+   Accessible (role=dialog, aria-modal, focus moved to the primary action,
+   ESC / overlay click cancels) and promise-based so callers can simply
+   `if(!(await confirmDialog({...}))) return;`
+   ========================================================================== */
+function confirmDialog(opts){
+  opts = opts || {};
+  const title   = opts.title   || 'Please confirm';
+  const message = opts.message || 'Are you sure?';
+  const yes     = opts.confirmText || 'Confirm';
+  const no      = opts.cancelText  || 'Cancel';
+  const danger  = opts.danger !== false;
+
+  return new Promise(resolve => {
+    const prev = document.getElementById('__confirm_dialog__');
+    if(prev) prev.remove();
+
+    const wrap = document.createElement('div');
+    wrap.id = '__confirm_dialog__';
+    wrap.className = 'confirm-overlay';
+    wrap.setAttribute('role','dialog');
+    wrap.setAttribute('aria-modal','true');
+    wrap.setAttribute('aria-labelledby','__confirm_title__');
+    wrap.setAttribute('aria-describedby','__confirm_msg__');
+    wrap.innerHTML =
+      '<div class="confirm-card">' +
+        '<div class="confirm-head" id="__confirm_title__"></div>' +
+        '<div class="confirm-body" id="__confirm_msg__"></div>' +
+        '<div class="confirm-foot">' +
+          '<button type="button" class="btn btn-outline" data-a="no"></button>' +
+          '<button type="button" class="btn ' + (danger ? 'btn-danger' : 'btn-primary') + '" data-a="yes"></button>' +
+        '</div>' +
+      '</div>';
+    wrap.querySelector('#__confirm_title__').textContent = title;
+    wrap.querySelector('#__confirm_msg__').textContent = message;
+    wrap.querySelector('[data-a="no"]').textContent = no;
+    wrap.querySelector('[data-a="yes"]').textContent = yes;
+    document.body.appendChild(wrap);
+
+    const lastFocus = document.activeElement;
+    const done = v => {
+      document.removeEventListener('keydown', onKey, true);
+      wrap.remove();
+      if(lastFocus && lastFocus.focus) try { lastFocus.focus(); } catch(_){}
+      resolve(v);
+    };
+    const onKey = e => {
+      if(e.key === 'Escape'){ e.stopPropagation(); done(false); }
+      if(e.key === 'Tab'){
+        const f = wrap.querySelectorAll('button');
+        const first = f[0], last = f[f.length-1];
+        if(e.shiftKey && document.activeElement === first){ e.preventDefault(); last.focus(); }
+        else if(!e.shiftKey && document.activeElement === last){ e.preventDefault(); first.focus(); }
+      }
+    };
+    document.addEventListener('keydown', onKey, true);
+    wrap.addEventListener('click', e => {
+      const a = e.target && e.target.getAttribute && e.target.getAttribute('data-a');
+      if(a === 'yes') done(true);
+      else if(a === 'no' || e.target === wrap) done(false);
+    });
+    setTimeout(() => { const b = wrap.querySelector('[data-a="yes"]'); if(b) b.focus(); }, 20);
+  });
+}
+
+/* Shorthand for destructive actions. */
+function confirmDelete(message, title){
+  return confirmDialog({
+    title: title || 'Delete record',
+    message: message || 'This record will be deleted. Continue?',
+    confirmText: 'Delete',
+    danger: true
+  });
+}
+
+/* Escaping helpers — available on every page (previously duplicated ad hoc). */
+function escapeHtml(s){
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function escapeAttr(s){ return escapeHtml(s); }
