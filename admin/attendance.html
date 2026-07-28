@@ -17,21 +17,28 @@ let CURRENT_TAB = 'all';
 let SEARCH = '';
 let CURRENT_DATE = todayStr();
 let REFRESH_TIMER = null;
+let DAY_ROWS = [];       // records that ACTUALLY exist for CURRENT_DATE
+let EDIT_RECORD_ID = null;
 
 async function render(){
   const admin = await requireAdmin(); if(!admin) return;
   document.getElementById('shell').innerHTML = renderSidebar('admin','attendance') + `
     <main class="main">
-      ${renderTopbar('Attendance', "Live attendance. Late/Absent thresholds follow the Scanner schedule settings.",
+      ${renderTopbar('Attendance', "Records for the selected date only. Late/Absent thresholds follow the Scanner schedule.",
         `<button class="btn btn-outline" onclick="refreshData()">Refresh</button>
-         <button class="btn btn-outline" style="color:#c53030;border-color:#c53030" onclick="deleteForDate()">Delete records for selected date</button>`)}
+         <a class="btn-icon" href="archived.html#attendance" title="Open deleted records archive" aria-label="Open deleted records archive">${ICONS.file}</a>
+         <button class="btn btn-outline" style="color:#c53030;border-color:#c53030" onclick="deleteForDate()">Delete all for this date</button>`)}
 
       <div class="card">
         <div class="filter-row" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
-          <label class="text-sm" style="min-width:auto">Date:</label>
-          <input type="date" class="form-control" id="dateFilter" value="${CURRENT_DATE}" style="max-width:180px" onchange="changeDate(this.value)">
+          <label class="text-sm" for="dateFilter" style="min-width:auto">Date:</label>
+          <input type="date" class="form-control" id="dateFilter" value="${CURRENT_DATE}" max="${todayStr()}" style="max-width:180px" onchange="changeDate(this.value)">
+          <button class="btn btn-outline btn-sm" onclick="changeDate(todayStr())">Today</button>
+          <label class="sr-only" for="search">Search interns</label>
           <input type="text" class="form-control" id="search" placeholder="Search name or ID…" style="flex:1;min-width:200px" oninput="onSearch(this.value)">
         </div>
+
+        <div class="text-sm text-muted" id="dateSummary" aria-live="polite" style="margin-bottom:10px"></div>
 
         <div class="status-tabs">
           <button class="status-tab active" data-tab="all"    onclick="switchTab('all')">All <span class="count" id="cnt-all">0</span></button>
@@ -43,87 +50,209 @@ async function render(){
         <div class="table-wrap">
           <table class="table">
             <thead><tr>
-              <th>Intern ID</th><th>Name</th>
-              <th>Time In</th><th>Time Out</th>
-              <th>Status</th><th>Hours</th>
+              <th scope="col">Intern ID</th><th scope="col">Name</th>
+              <th scope="col">Time In</th><th scope="col">Time Out</th>
+              <th scope="col">Status</th><th scope="col">Hours</th>
+              <th scope="col" style="text-align:right">Actions</th>
             </tr></thead>
             <tbody id="rows"></tbody>
           </table>
         </div>
       </div>
-    </main>`;
+    </main>
+
+    <!-- Manual record modification -->
+    <div class="modal" id="recModal">
+      <div class="modal-inner" style="max-width:480px">
+        <div class="modal-head">
+          <h3>Edit Attendance Record</h3>
+          <button class="close-x" onclick="closeModal('recModal')" aria-label="Close dialog">×</button>
+        </div>
+        <div class="modal-body">
+          <div id="r_who" style="font-weight:700;color:var(--blue-900);margin-bottom:4px"></div>
+          <div class="text-muted text-sm" id="r_date" style="margin-bottom:14px"></div>
+          <div class="form-row">
+            <div class="form-group"><label for="r_in">Time In</label><input type="time" class="form-control" id="r_in"></div>
+            <div class="form-group"><label for="r_out">Time Out</label><input type="time" class="form-control" id="r_out"></div>
+          </div>
+          <div class="form-group">
+            <label for="r_status">Status</label>
+            <select class="form-control" id="r_status">
+              <option value="present">Present</option>
+              <option value="late">Late</option>
+              <option value="absent">Absent</option>
+            </select>
+          </div>
+          <p class="text-sm text-muted" id="r_hint" aria-live="polite"></p>
+          <div class="form-error" id="r_err" role="alert"></div>
+        </div>
+        <div class="modal-foot">
+          <button class="btn btn-outline" onclick="closeModal('recModal')">Cancel</button>
+          <button class="btn btn-primary" id="r_save" onclick="saveRecord()">Save Changes</button>
+        </div>
+      </div>
+    </div>`;
   startClock('#clockBox');
-  drawRows();
+  await loadDate();
   if(REFRESH_TIMER) clearInterval(REFRESH_TIMER);
   REFRESH_TIMER = setInterval(refreshData, 30000);
 }
 
-function changeDate(d){ CURRENT_DATE = d; drawRows(); }
-function onSearch(v){ SEARCH = v.toLowerCase(); drawRows(); }
+async function changeDate(d){
+  if(!d) return;
+  CURRENT_DATE = d;
+  const picker = document.getElementById('dateFilter');
+  if(picker && picker.value !== d) picker.value = d;
+  await loadDate();
+}
+function onSearch(v){ SEARCH = v.toLowerCase().trim(); drawRows(); }
 function switchTab(tab){
   CURRENT_TAB = tab;
   document.querySelectorAll('.status-tab').forEach(b=>b.classList.toggle('active', b.dataset.tab===tab));
   drawRows();
 }
 
-function computeRows(){
-  const students = window.__DB__.students.filter(s=>s.active);
-  return students.map(s=>{
-    const rec = window.__DB__.attendance.find(a=>a.student_id===s.id && a.date===CURRENT_DATE);
-    return { id:s.id, name:s.name, avatar:s.avatar,
-      time_in: rec?.time_in || null,
-      time_out: rec?.time_out || null,
-      status: rec?.status || 'absent',
-      hours: rec?.hours || 0
-    };
-  });
+/* Fetch the records that EXIST for the chosen date. Interns without a record
+   that day are intentionally NOT listed — the table reflects real detected
+   records only. */
+async function loadDate(){
+  const rows = document.getElementById('rows');
+  if(rows) rows.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#888;padding:20px">Loading records…</td></tr>';
+  if(CURRENT_DATE === todayStr()) await autoMarkAbsent();
+  const r = await fetchAttendanceForDate(CURRENT_DATE);
+  if(!r.ok){ toast(r.error,'error'); DAY_ROWS = []; }
+  else DAY_ROWS = r.rows;
+  drawRows();
+}
+async function refreshData(){ await loadDate(); }
+
+function decorate(rec){
+  const s = window.__DB__.students.find(x=>x.id===rec.student_id);
+  return {
+    ...rec,
+    name: s ? s.name : rec.student_id,
+    avatar: s ? s.avatar : null,
+    archived: s ? s.active === false : false
+  };
 }
 
 function drawRows(){
-  const all = computeRows().filter(r=>
-    !SEARCH || r.id.toLowerCase().includes(SEARCH) || r.name.toLowerCase().includes(SEARCH)
-  );
+  const all = DAY_ROWS.map(decorate).filter(r=>
+    !SEARCH || String(r.student_id).toLowerCase().includes(SEARCH) || String(r.name).toLowerCase().includes(SEARCH)
+  ).sort((a,b)=> (b.time_in||'').localeCompare(a.time_in||'') || String(a.name).localeCompare(String(b.name)));
+
   const counts = { all: all.length, present:0, late:0, absent:0 };
-  all.forEach(r=>counts[r.status]++);
+  all.forEach(r=>{ if(counts[r.status] != null) counts[r.status]++; });
   document.getElementById('cnt-all').textContent = counts.all;
   document.getElementById('cnt-present').textContent = counts.present;
   document.getElementById('cnt-late').textContent = counts.late;
   document.getElementById('cnt-absent').textContent = counts.absent;
 
+  const summary = document.getElementById('dateSummary');
+  summary.textContent = DAY_ROWS.length
+    ? `${DAY_ROWS.length} attendance record${DAY_ROWS.length===1?'':'s'} detected for ${fmtDate(CURRENT_DATE)}.`
+    : `No attendance records were recorded on ${fmtDate(CURRENT_DATE)}.`;
+
   const filtered = CURRENT_TAB==='all' ? all : all.filter(r=>r.status===CURRENT_TAB);
   const rows = document.getElementById('rows');
+
+  if(!DAY_ROWS.length){
+    rows.innerHTML = `<tr><td colspan="7" style="text-align:center;color:#888;padding:26px">
+      No records found for <strong>${fmtDate(CURRENT_DATE)}</strong>. Pick another date.</td></tr>`;
+    return;
+  }
+
   rows.innerHTML = filtered.map(r=>`
     <tr>
-      <td style="font-weight:700;color:var(--blue-800)">${r.id}</td>
-      <td><div class="cell-name">${profileIconHTML(r,30)}<span class="name-text">${r.name}</span></div></td>
+      <td style="font-weight:700;color:var(--blue-800)">${escapeHtml(r.student_id)}</td>
+      <td><div class="cell-name">${profileIconHTML(r,30)}<span class="name-text">${escapeHtml(r.name)}</span>${r.archived?' <span class="pill gray">Archived</span>':''}</div></td>
       <td>${fmt12(r.time_in)}</td>
       <td>${fmt12(r.time_out)}</td>
       <td><span class="badge badge-${r.status}">${r.status.charAt(0).toUpperCase()+r.status.slice(1)}</span></td>
-      <td>${r.hours.toFixed(2)}</td>
-    </tr>`).join('') || `<tr><td colspan="6" style="text-align:center;color:#888;padding:20px">No ${CURRENT_TAB==='all'?'':CURRENT_TAB+' '}records for ${fmtDate(CURRENT_DATE)}.</td></tr>`;
+      <td>${Number(r.hours||0).toFixed(2)}</td>
+      <td style="text-align:right;white-space:nowrap">
+        <button class="btn-icon" onclick="openRecord('${r.id}')" title="Edit record" aria-label="Edit record for ${escapeAttr(r.name)}">${ICONS.edit}</button>
+        <button class="btn-icon danger" onclick="delRecord('${r.id}')" title="Delete record" aria-label="Delete record for ${escapeAttr(r.name)}">${ICONS.trash}</button>
+      </td>
+    </tr>`).join('') || `<tr><td colspan="7" style="text-align:center;color:#888;padding:20px">No ${CURRENT_TAB} records for ${fmtDate(CURRENT_DATE)}.</td></tr>`;
 }
 
-async function refreshData(){
-  const { data } = await sb.from('attendance').select('*').eq('date', CURRENT_DATE);
-  const internIdMap = new Map(window.__DB__.students.map(s=>[s.auth_id, s.id]));
-  window.__DB__.attendance = window.__DB__.attendance.filter(a=>a.date!==CURRENT_DATE);
-  (data||[]).forEach(a=>{
-    window.__DB__.attendance.push({
-      id:a.id, student_id: internIdMap.get(a.student_id)||a.student_id, _auth_id:a.student_id,
-      date:a.date, time_in:a.time_in?.slice(0,5)||null, time_out:a.time_out?.slice(0,5)||null,
-      hours: Number(a.hours||0), status:a.status, verified:a.verified
-    });
-  });
-  await autoMarkAbsent();
+/* ---------- manual modification ---------- */
+function openRecord(id){
+  const rec = DAY_ROWS.find(r=>r.id===id); if(!rec) return;
+  const r = decorate(rec);
+  EDIT_RECORD_ID = id;
+  document.getElementById('r_who').textContent = `${r.name} · ${r.student_id}`;
+  document.getElementById('r_date').textContent = fmtDate(r.date);
+  document.getElementById('r_in').value = r.time_in || '';
+  document.getElementById('r_out').value = r.time_out || '';
+  document.getElementById('r_status').value = r.status || 'absent';
+  document.getElementById('r_err').textContent = '';
+  document.getElementById('r_hint').textContent = 'Hours are recalculated automatically from time in/out minus the intern\u2019s break.';
+  openModal('recModal');
+}
+
+async function saveRecord(){
+  const err  = document.getElementById('r_err');
+  const tin  = document.getElementById('r_in').value;
+  const tout = document.getElementById('r_out').value;
+  const status = document.getElementById('r_status').value;
+
+  if(tout && !tin){ err.textContent = 'A time out needs a time in.'; return; }
+  if(tin && tout && tout <= tin){ err.textContent = 'Time out must be later than time in.'; return; }
+  if(status !== 'absent' && !tin){ err.textContent = 'Present/Late records need a time in.'; return; }
+
+  const btn = document.getElementById('r_save');
+  btn.disabled = true; btn.textContent = 'Saving…';
+  const r = await updateAttendanceRecord(EDIT_RECORD_ID, { time_in:tin, time_out:tout, status, verified:true });
+  btn.disabled = false; btn.textContent = 'Save Changes';
+  if(!r.ok){ err.textContent = r.error; return; }
+
+  const i = DAY_ROWS.findIndex(x=>x.id===EDIT_RECORD_ID);
+  if(i>=0) DAY_ROWS[i] = r.record;
+  closeModal('recModal');
+  toast('Record updated.','success');
   drawRows();
+}
+
+/* ---------- deletion (soft delete → Archive) ---------- */
+async function delRecord(id){
+  const rec = DAY_ROWS.find(r=>r.id===id); if(!rec) return;
+  const r = decorate(rec);
+  const ok = await confirmDelete(
+    `Delete the ${fmtDate(r.date)} record for ${r.name} (${r.student_id})? You can restore it from the Archived page.`,
+    'Delete attendance record'
+  );
+  if(!ok) return;
+
+  // Optimistic removal so the row disappears immediately.
+  DAY_ROWS = DAY_ROWS.filter(x=>x.id!==id);
+  drawRows();
+
+  const res = await softDeleteAttendance(id);
+  if(!res.ok){
+    toast(res.error,'error');
+    await loadDate();
+    return;
+  }
+  toast('Record deleted. It is now in Archived.','success');
 }
 
 async function deleteForDate(){
-  if(!confirm(`Delete ALL attendance records for ${fmtDate(CURRENT_DATE)}? This cannot be undone.`)) return;
-  const r = await deleteAllAttendanceForDate(CURRENT_DATE);
-  if(!r.ok){ toast(r.error,'error'); return; }
-  toast(`Records for ${fmtDate(CURRENT_DATE)} deleted.`,'success');
+  if(!DAY_ROWS.length){ toast('There are no records for this date.','info'); return; }
+  const ok = await confirmDelete(
+    `Delete all ${DAY_ROWS.length} attendance record(s) for ${fmtDate(CURRENT_DATE)}? They can be restored from the Archived page.`,
+    'Delete records for date'
+  );
+  if(!ok) return;
+
+  const ids = DAY_ROWS.map(r=>r.id);
+  DAY_ROWS = [];
   drawRows();
+  const { error } = await sb.from('attendance').update({ deleted_at:new Date().toISOString() }).in('id', ids);
+  if(error){ toast(error.message,'error'); await loadDate(); return; }
+  window.__DB__.attendance = window.__DB__.attendance.filter(a=>!ids.includes(a.id));
+  toast(`${ids.length} record(s) moved to Archived.`,'success');
 }
 
 render();
