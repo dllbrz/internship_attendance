@@ -49,6 +49,7 @@ function ensureQrLib(){
 }
 
 let scanner = null;
+let SELECTED = new Set();   // intern IDs ticked for bulk schedule assignment
 let lastScannedAt = 0;
 let cameraStarted = false;
 let permissionState = 'unknown'; // 'granted' | 'denied' | 'prompt' | 'unknown'
@@ -58,23 +59,61 @@ async function render(){
   const sch = getOfficeSchedule();
   document.getElementById('shell').innerHTML = renderSidebar('admin','scanner') + `
     <main class="main">
-      ${renderTopbar('QR Scanner', 'Scan an intern QR to record Time In. Late/Absent are computed from the schedule below.')}
+      ${renderTopbar('QR Scanner & Schedule', 'First scan of the day records Time In, the second records Time Out. Status follows the office schedule below.')}
 
       <div class="card">
-        <div class="card-title" style="margin-bottom:8px">Office / Shift Schedule</div>
-        <div class="scanner-settings">
-          <div class="form-group"><label>Default Start Time</label>
-            <input type="time" class="form-control" id="s_start" value="${sch.start_time}"></div>
-          <div class="form-group"><label>Grace (min) — Late threshold</label>
-            <input type="number" class="form-control" id="s_grace" min="0" max="120" value="${sch.grace_minutes}"></div>
-          <div class="form-group"><label>Absent after (min)</label>
-            <input type="number" class="form-control" id="s_absent" min="15" max="480" value="${sch.absent_after_minutes}"></div>
-          <button class="btn btn-primary" onclick="saveSchedule()">Save Schedule</button>
-        </div>
-        <p class="text-sm text-muted" style="margin:6px 0 0">
-          Present: on-time or within grace. Late: after grace. Absent: check-in exceeds
-          <strong>Absent after</strong> minutes past the start time (default 1 hour).
+        <div class="card-title" style="margin-bottom:8px">Global Office / Shift Schedule</div>
+        <p class="text-sm text-muted" style="margin:0 0 12px">
+          Saved once and enforced for every intern on every device. Interns with their own
+          shift (set on the Students page) keep their custom times.
         </p>
+        <div class="scanner-settings">
+          <div class="form-group"><label for="s_start">Shift Time In</label>
+            <input type="time" class="form-control" id="s_start" value="${sch.start_time}"></div>
+          <div class="form-group"><label for="s_end">Shift Time Out</label>
+            <input type="time" class="form-control" id="s_end" value="${sch.end_time || '17:00'}"></div>
+          <div class="form-group"><label for="s_grace">Grace (min) — on time until</label>
+            <input type="number" class="form-control" id="s_grace" min="0" max="120" value="${sch.grace_minutes}"></div>
+          <div class="form-group"><label for="s_absent">Absent after (min)</label>
+            <input type="number" class="form-control" id="s_absent" min="15" max="480" value="${sch.absent_after_minutes}"></div>
+          <div class="form-group"><label for="s_break">Break (min)</label>
+            <input type="number" class="form-control" id="s_break" min="0" max="180" step="15" value="${sch.break_minutes == null ? 60 : sch.break_minutes}"></div>
+          <button class="btn btn-primary" id="saveSchedBtn" onclick="saveSchedule()">Save Schedule</button>
+        </div>
+        <p class="text-sm text-muted" style="margin:10px 0 0">
+          <strong>On time</strong>: scanned before start + grace. <strong>Late</strong>: after grace.
+          <strong>Absent</strong>: no scan by start + “Absent after”, or past the shift end.
+        </p>
+      </div>
+
+      <div class="card">
+        <div class="card-title" style="margin-bottom:4px">Assign Schedule to Interns</div>
+        <p class="text-sm text-muted" style="margin:0 0 12px">
+          Pick the OJT dates and shift, tick the interns on the left, then apply.
+        </p>
+        <div class="scanner-settings">
+          <div class="form-group"><label for="a_sdate">Start Date</label>
+            <input type="date" class="form-control" id="a_sdate"></div>
+          <div class="form-group"><label for="a_edate">End Date</label>
+            <input type="date" class="form-control" id="a_edate"></div>
+          <div class="form-group"><label for="a_tin">Time In</label>
+            <input type="time" class="form-control" id="a_tin" value="${sch.start_time}"></div>
+          <div class="form-group"><label for="a_tout">Time Out</label>
+            <input type="time" class="form-control" id="a_tout" value="${sch.end_time || '17:00'}"></div>
+          <div class="form-group"><label for="a_break">Break (min)</label>
+            <input type="number" class="form-control" id="a_break" min="0" max="180" step="15" value="${sch.break_minutes == null ? 60 : sch.break_minutes}"></div>
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:6px 0 10px">
+          <label class="sr-only" for="schSearch">Search interns</label>
+          <input class="form-control" id="schSearch" placeholder="Search intern…" style="flex:1;min-width:180px" oninput="drawSchedList(this.value)">
+          <button class="btn btn-outline btn-sm" onclick="selectAllInterns(true)">Select all</button>
+          <button class="btn btn-outline btn-sm" onclick="selectAllInterns(false)">Clear</button>
+        </div>
+        <div class="sched-list" id="schedList" role="group" aria-label="Interns to assign the schedule to"></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap">
+          <span class="text-sm text-muted" id="selCount" aria-live="polite">0 interns selected</span>
+          <button class="btn btn-primary" id="applyBtn" onclick="applySchedule()">Apply Schedule to Selected</button>
+        </div>
       </div>
 
       <div class="card-grid-2">
@@ -96,9 +135,14 @@ async function render(){
         </div>
         <div class="card">
           <div class="card-title">Today's Scans</div>
+          <p class="text-sm text-muted" style="margin:0 0 8px">1st scan = Time In · 2nd scan = Time Out.</p>
           <div class="table-wrap">
             <table class="table">
-              <thead><tr><th>Intern ID</th><th>Name</th><th>Time In</th><th>Status</th></tr></thead>
+              <thead><tr>
+                <th scope="col">Intern ID</th><th scope="col">Name</th>
+                <th scope="col">Time In</th><th scope="col">Time Out</th>
+                <th scope="col">Status</th>
+              </tr></thead>
               <tbody id="log"></tbody>
             </table>
           </div>
@@ -106,18 +150,107 @@ async function render(){
       </div>
     </main>`;
   startClock('#clockBox');
+  drawSchedList('');
   drawLog();
+  setInterval(drawLog, 60000); // keep pending/late/absent statuses live
   await checkPermission();
   // Warm up the QR library in the background (non-blocking).
   ensureQrLib().catch(e => setPermBanner(e.message, 'error'));
 }
 
-function saveSchedule(){
-  const start = document.getElementById('s_start').value || '08:00';
-  const grace = +document.getElementById('s_grace').value || 0;
+async function saveSchedule(){
+  const start  = document.getElementById('s_start').value || '08:00';
+  const end    = document.getElementById('s_end').value || '17:00';
+  const grace  = +document.getElementById('s_grace').value || 0;
   const absent = +document.getElementById('s_absent').value || 60;
-  setOfficeSchedule({ start_time:start, grace_minutes:grace, absent_after_minutes:absent });
-  toast('Schedule saved.','success');
+  const brk    = +document.getElementById('s_break').value || 0;
+
+  if(end <= start){ toast('Shift time out must be later than time in.','error'); return; }
+  if(absent <= grace){ toast('“Absent after” must be greater than the grace period.','error'); return; }
+
+  const btn = document.getElementById('saveSchedBtn');
+  btn.disabled = true; btn.textContent = 'Saving…';
+  const r = await setOfficeSchedule({
+    start_time:start, end_time:end, grace_minutes:grace,
+    absent_after_minutes:absent, break_minutes:brk
+  });
+  btn.disabled = false; btn.textContent = 'Save Schedule';
+  if(!r.ok){ toast('Saved on this device only: '+r.error,'error'); }
+  else toast('Schedule saved and applied to all interns.','success');
+  drawSchedList(document.getElementById('schSearch').value);
+  drawLog();
+}
+
+/* ---------------- intern selection list (checkbox on the LEFT) ------------- */
+function activeInterns(){ return window.__DB__.students.filter(s=>s.active !== false); }
+
+function drawSchedList(q){
+  const term = (q||'').toLowerCase().trim();
+  const list = activeInterns().filter(s=>
+    !term || s.name.toLowerCase().includes(term) || String(s.id).toLowerCase().includes(term)
+  ).sort((a,b)=>a.name.localeCompare(b.name));
+
+  const el = document.getElementById('schedList');
+  el.innerHTML = list.map(s=>`
+    <div class="sched-row">
+      <input type="checkbox" id="sel_${escapeAttr(s.id)}" ${SELECTED.has(s.id)?'checked':''}
+             onchange="toggleSel('${escapeAttr(s.id)}', this.checked)"
+             aria-label="Select ${escapeAttr(s.name)}">
+      ${profileIconHTML(s,32)}
+      <label class="sched-meta" for="sel_${escapeAttr(s.id)}" style="cursor:pointer">
+        <strong>${escapeHtml(s.name)}</strong>
+        <small>${escapeHtml(s.id)}</small>
+      </label>
+      <span class="sched-time">${fmt12(s.expected_time_in)} – ${fmt12(s.expected_time_out)}</span>
+    </div>`).join('') ||
+    '<div style="padding:16px;text-align:center;color:#888">No interns found.</div>';
+  updateSelCount();
+}
+function toggleSel(id, on){ on ? SELECTED.add(id) : SELECTED.delete(id); updateSelCount(); }
+function selectAllInterns(on){
+  const term = (document.getElementById('schSearch').value||'').toLowerCase().trim();
+  activeInterns().forEach(s=>{
+    const match = !term || s.name.toLowerCase().includes(term) || String(s.id).toLowerCase().includes(term);
+    if(match) on ? SELECTED.add(s.id) : SELECTED.delete(s.id);
+  });
+  drawSchedList(document.getElementById('schSearch').value);
+}
+function updateSelCount(){
+  const n = SELECTED.size;
+  document.getElementById('selCount').textContent = `${n} intern${n===1?'':'s'} selected`;
+}
+
+async function applySchedule(){
+  const ids = [...SELECTED];
+  if(!ids.length){ toast('Select at least one intern first.','error'); return; }
+  const sd = document.getElementById('a_sdate').value;
+  const ed = document.getElementById('a_edate').value;
+  const tin = document.getElementById('a_tin').value;
+  const tout = document.getElementById('a_tout').value;
+  const brk = +document.getElementById('a_break').value || 0;
+
+  if(!tin || !tout){ toast('Time in and time out are required.','error'); return; }
+  if(tout <= tin){ toast('Time out must be later than time in.','error'); return; }
+  if(sd && ed && ed < sd){ toast('End date cannot be before the start date.','error'); return; }
+
+  const ok = await confirmDialog({
+    title:'Apply schedule',
+    message:`Apply ${fmt12(tin)} – ${fmt12(tout)} with a ${brk}-minute break to ${ids.length} intern(s)?`,
+    confirmText:'Apply'
+  });
+  if(!ok) return;
+
+  const btn = document.getElementById('applyBtn');
+  btn.disabled = true; btn.textContent = 'Applying…';
+  const r = await applyScheduleToStudents(ids, {
+    expected_time_in:tin, expected_time_out:tout, break_minutes:brk,
+    start_date: sd || undefined, end_date: ed || undefined
+  });
+  btn.disabled = false; btn.textContent = 'Apply Schedule to Selected';
+  if(!r.ok){ toast(r.error,'error'); }
+  else { toast(`Schedule applied to ${r.count} intern(s).`,'success'); SELECTED.clear(); }
+  drawSchedList(document.getElementById('schSearch').value);
+  drawLog();
 }
 
 function setPermBanner(html, kind){
@@ -228,10 +361,15 @@ async function onScan(text){
   lastScannedAt = now;
   const st = resolveQR(text);
   if(!st){ toast('Unknown QR code','error'); return; }
-  const r = await markPresent(st.id);
+  const r = await scanAttendance(st.id);
   if(!r.ok){ toast(r.error,'error'); return; }
-  if(r.already){ toast(`${st.name} already timed in.`,'info'); }
-  else { toast(`${st.name} — ${r.status.toUpperCase()} at ${fmt12(r.time)}`, r.status==='late'?'error':'success'); }
+  if(r.already){
+    toast(`${st.name} already timed out at ${fmt12(r.time)}.`,'info');
+  } else if(r.kind === 'out'){
+    toast(`${st.name} — TIME OUT at ${fmt12(r.time)} · ${Number(r.hours||0).toFixed(2)} hrs rendered`,'success');
+  } else {
+    toast(`${st.name} — TIME IN at ${fmt12(r.time)} (${r.status.toUpperCase()})`, r.status==='present'?'success':'error');
+  }
   drawLog();
 }
 async function scanManual(){
@@ -242,21 +380,28 @@ async function scanManual(){
 }
 
 function drawLog(){
+  const el = document.getElementById('log');
+  if(!el) return;
   const today = todayStr();
   const rows = window.__DB__.attendance
-    .filter(a=>a.date===today && a.time_in)
+    .filter(a=>a.date===today && a.time_in && !a.deleted_at)
     .map(a=>{
       const s = window.__DB__.students.find(x=>x.id===a.student_id);
-      return { id:a.student_id, name:s?.name||'—', time_in:a.time_in, status:a.status };
+      return { id:a.student_id, name:(s&&s.name)||'—', student:s, rec:a };
     })
-    .sort((a,b)=>b.time_in.localeCompare(a.time_in));
-  document.getElementById('log').innerHTML = rows.map(r=>`
+    .sort((a,b)=>String(b.rec.time_in).localeCompare(String(a.rec.time_in)));
+
+  el.innerHTML = rows.map(r=>{
+    const st = shiftStatusFor(r.student, r.rec);
+    return `
     <tr>
-      <td style="font-weight:700;color:var(--blue-800)">${r.id}</td>
-      <td>${r.name}</td>
-      <td>${fmt12(r.time_in)}</td>
-      <td><span class="badge badge-${r.status}">${r.status.charAt(0).toUpperCase()+r.status.slice(1)}</span></td>
-    </tr>`).join('') || '<tr><td colspan="4" style="text-align:center;color:#888;padding:16px">No scans yet today.</td></tr>';
+      <td style="font-weight:700;color:var(--blue-800)">${escapeHtml(r.id)}</td>
+      <td>${escapeHtml(r.name)}</td>
+      <td>${fmt12(r.rec.time_in)}</td>
+      <td>${r.rec.time_out ? fmt12(r.rec.time_out) : '<span class="text-muted">Awaiting 2nd scan</span>'}</td>
+      <td><span class="badge badge-${st.key}">${escapeHtml(st.label)}</span></td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="5" style="text-align:center;color:#888;padding:16px">No scans yet today.</td></tr>';
 }
 
 render();
