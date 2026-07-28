@@ -73,7 +73,9 @@ function _mapProfileRow(p){
     required_hours: p.required_hours,
     start_date: p.start_date,
     end_date: p.end_date,
-    expected_time_in: p.expected_time_in || '08:00',
+    expected_time_in: (p.expected_time_in || '08:00').slice(0,5),
+    expected_time_out: (p.expected_time_out || '17:00').slice(0,5),
+    break_minutes: (p.break_minutes == null ? 60 : Number(p.break_minutes)),
     active: p.active,
     avatar: p.avatar_url,          // legacy field name
     avatar_url: p.avatar_url,
@@ -91,8 +93,78 @@ function _mapAttendance(a, internIdMap){
     time_out: a.time_out ? a.time_out.slice(0,5) : null,
     hours: Number(a.hours || 0),
     status: a.status,
-    verified: a.verified
+    verified: a.verified,
+    deleted_at: a.deleted_at || null
   };
+}
+
+// ---------- session restore ----------
+// BUGFIX (navigation bounces back to the login page):
+// supabase-js restores the persisted session ASYNCHRONOUSLY. On a fresh page
+// load getSession() can resolve with `null` while the client is still reading
+// localStorage or refreshing an expired access token. The old code treated
+// that transient null as "signed out" and redirected to login, so clicking any
+// sidebar link occasionally kicked the user out. We now wait for the client to
+// settle (INITIAL_SESSION / TOKEN_REFRESHED) with a short polling fallback
+// before concluding that nobody is signed in.
+function _hasPersistedSession(){
+  try {
+    for(let i=0; i<localStorage.length; i++){
+      const k = localStorage.key(i);
+      if(k && (k === 'naic_ojt_auth' || /^sb-.*-auth-token$/.test(k))){
+        const raw = localStorage.getItem(k);
+        if(raw && raw !== 'null' && raw.length > 10) return true;
+      }
+    }
+  } catch(_){}
+  return false;
+}
+
+async function waitForSession(maxWaitMs){
+  const deadline = Date.now() + (maxWaitMs || 6000);
+
+  // Fast path.
+  let { data: { session } } = await sb.auth.getSession();
+  if(session) return session;
+
+  // Nothing persisted at all → genuinely signed out, don't stall the page.
+  if(!_hasPersistedSession()) return null;
+
+  // Give the client a chance to hydrate / refresh.
+  const settled = await new Promise(resolve => {
+    let done = false;
+    let sub = null;
+    let poll = null;
+    const finish = v => {
+      if(done) return;
+      done = true;
+      if(poll) clearInterval(poll);
+      if(sub){ try { sub.unsubscribe(); } catch(_){} }
+      resolve(v);
+    };
+    try {
+      const res = sb.auth.onAuthStateChange((event, s2) => {
+        if(s2) finish(s2);
+        else if(event === 'SIGNED_OUT') finish(null);
+      });
+      sub = res && res.data && res.data.subscription;
+    } catch(_){}
+    poll = setInterval(async () => {
+      const { data } = await sb.auth.getSession();
+      if(data.session) finish(data.session);
+      else if(Date.now() > deadline) finish(null);
+    }, 250);
+    setTimeout(() => finish(null), Math.max(0, deadline - Date.now()));
+  });
+  if(settled) return settled;
+
+  // Last resort: force a refresh using the stored refresh token.
+  try {
+    const { data } = await sb.auth.refreshSession();
+    if(data && data.session) return data.session;
+  } catch(_){}
+  const { data: final } = await sb.auth.getSession();
+  return final.session || null;
 }
 
 // ---------- bootstrap: load session + cache on every page ----------
@@ -103,17 +175,7 @@ async function bootstrap(){
   // valid refresh token is present. Give the client one refresh chance
   // before we treat the user as signed out — this fixes the bug where
   // navigating between pages bounces the user back to the login screen.
-  let { data: { session }, error: sessionError } = await sb.auth.getSession();
-  if(sessionError){ console.error(sessionError); return; }
-  if(!session){
-    try {
-      const { data: userData } = await sb.auth.getUser();
-      if(userData && userData.user){
-        const retry = await sb.auth.getSession();
-        session = retry.data.session;
-      }
-    } catch(_e){ /* fall through */ }
-  }
+  const session = await waitForSession();
   if(!session){ return; }
 
   const userId = session.user.id;
@@ -141,9 +203,9 @@ async function bootstrap(){
   let att;
   let attError;
   if(isAdmin){
-    ({data: att, error: attError} = await sb.from('attendance').select('*').order('date',{ascending:false}));
+    ({data: att, error: attError} = await sb.from('attendance').select('*').is('deleted_at', null).order('date',{ascending:false}));
   } else {
-    ({data: att, error: attError} = await sb.from('attendance').select('*').eq('student_id', userId).order('date',{ascending:false}));
+    ({data: att, error: attError} = await sb.from('attendance').select('*').eq('student_id', userId).is('deleted_at', null).order('date',{ascending:false}));
   }
   if(attError){ console.warn('Attendance load failed:', attError); }
   window.__DB__.attendance = (att||[]).map(a=>_mapAttendance(a, internIdMap));
@@ -195,6 +257,9 @@ async function bootstrap(){
     }
   });
 
+  // global office / shift schedule (shared across every admin device)
+  await loadOfficeSchedule();
+
   // auto-mark absent: any active student without today's record whose expected time-in was > 1 hour ago
   await autoMarkAbsent();
 }
@@ -218,7 +283,7 @@ async function autoMarkAbsent(){
     await sb.from('attendance').upsert(toInsert, { onConflict:'student_id,date', ignoreDuplicates:true });
     // refresh cache with new absents
     const internIdMap = new Map(window.__DB__.students.map(s=>[s.auth_id, s.id]));
-    const { data:att } = await sb.from('attendance').select('*').eq('date',today);
+    const { data:att } = await sb.from('attendance').select('*').eq('date',today).is('deleted_at', null);
     (att||[]).forEach(a=>{
       const mapped = _mapAttendance(a, internIdMap);
       if(!window.__DB__.attendance.some(x=>x.id===mapped.id)) window.__DB__.attendance.unshift(mapped);
@@ -332,44 +397,19 @@ async function logout(opts){
 }
 
 function confirmLogout(){
-  // Prefer a styled modal; fall back to window.confirm.
-  return new Promise(function(resolve){
-    try {
-      // Remove any stale instance
-      const old = document.getElementById('__logout_confirm__');
-      if(old) old.remove();
-
-      const wrap = document.createElement('div');
-      wrap.id = '__logout_confirm__';
-      wrap.setAttribute('role','dialog');
-      wrap.setAttribute('aria-modal','true');
-      wrap.setAttribute('aria-label','Confirm log out');
-      wrap.style.cssText = 'position:fixed;inset:0;background:rgba(10,20,45,.55);z-index:10000;display:flex;align-items:center;justify-content:center;padding:20px;font-family:inherit';
-      wrap.innerHTML = ''+
-        '<div style="background:#fff;border-radius:12px;max-width:400px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.35);overflow:hidden">'+
-          '<div style="padding:18px 20px;border-bottom:1px solid #eef0f5;color:#0d2b6b;font-weight:700;font-size:16px">Log out</div>'+
-          '<div style="padding:16px 20px;color:#33477a;font-size:14px;line-height:1.5">Are you sure you want to log out of your account?</div>'+
-          '<div style="display:flex;justify-content:flex-end;gap:8px;padding:12px 16px;background:#f8fafc;border-top:1px solid #eef0f5">'+
-            '<button type="button" data-a="no" style="padding:8px 14px;border-radius:8px;border:1px solid #d4dbe8;background:#fff;color:#0d2b6b;font-weight:600;cursor:pointer">Cancel</button>'+
-            '<button type="button" data-a="yes" style="padding:8px 14px;border-radius:8px;border:1px solid #c53030;background:#c53030;color:#fff;font-weight:600;cursor:pointer">Log Out</button>'+
-          '</div>'+
-        '</div>';
-      document.body.appendChild(wrap);
-      wrap.addEventListener('click', function(e){
-        const a = e.target && e.target.getAttribute && e.target.getAttribute('data-a');
-        if(a === 'yes'){ wrap.remove(); resolve(true); }
-        else if(a === 'no' || e.target === wrap){ wrap.remove(); resolve(false); }
-      });
-      // ESC cancels
-      const onKey = function(ev){
-        if(ev.key === 'Escape'){ wrap.remove(); document.removeEventListener('keydown', onKey); resolve(false); }
-      };
-      document.addEventListener('keydown', onKey);
-    } catch(err){
-      resolve(window.confirm('Are you sure you want to log out?'));
-    }
-  });
+  // Uses the shared accessible dialog from js/app.js when available.
+  if(typeof confirmDialog === 'function'){
+    return confirmDialog({
+      title: 'Log out',
+      message: 'Are you sure you want to log out?',
+      confirmText: 'Log Out',
+      cancelText: 'Cancel',
+      danger: true
+    });
+  }
+  return Promise.resolve(window.confirm('Are you sure you want to log out?'));
 }
+
 function _isInSubfolder(){
   return /\/(student|admin)\//.test(window.location.pathname);
 }
@@ -418,8 +458,7 @@ async function timeIn(studentId){
   const existing = getTodayAttendance(studentId);
   if(existing && existing.time_in) return {ok:false, error:'Already timed in today.'};
   const t = nowTime();
-  const [h,m]=t.split(':').map(Number);
-  const status = (h>8 || (h===8 && m>0)) ? 'late' : 'present';
+  const status = classifyCheckIn(t, st.expected_time_in);
   const row = { student_id: st.auth_id, date: todayStr(), time_in: t, status, verified:true, hours:0 };
   const { data, error } = await sb.from('attendance').upsert(row, { onConflict:'student_id,date' }).select().single();
   if(error) return {ok:false, error:error.message};
@@ -437,7 +476,8 @@ async function timeOut(studentId){
   const t = nowTime();
   const [h1,m1]=rec.time_in.split(':').map(Number);
   const [h2,m2]=t.split(':').map(Number);
-  const hours = +Math.max(0,(h2*60+m2-(h1*60+m1))/60 - 1).toFixed(2);
+  const brk = breakMinutesFor(st);
+  const hours = +Math.max(0, (h2*60+m2-(h1*60+m1) - brk)/60).toFixed(2);
   const { data, error } = await sb.from('attendance').update({ time_out:t, hours }).eq('id', rec.id).select().single();
   if(error) return {ok:false, error:error.message};
   rec.time_out = t; rec.hours = hours;
@@ -484,7 +524,7 @@ async function updateStudent(studentInternId, patch){
   // Admin can only edit start_date, end_date, required_hours (enforced by UI)
   const st = window.__DB__.students.find(s=>s.id===studentInternId);
   if(!st) return {ok:false, error:'Not found'};
-  const allowed = ['start_date','end_date','required_hours','active','expected_time_in','full_name','avatar_url','phone','address','school','course','adviser_name','adviser_contact'];
+  const allowed = ['start_date','end_date','required_hours','active','expected_time_in','expected_time_out','break_minutes','full_name','avatar_url','phone','address','school','course','adviser_name','adviser_contact'];
   const upd = {};
   for(const k of Object.keys(patch)){ if(allowed.includes(k)) upd[k]=patch[k]; }
   const { error } = await sb.from('profiles').update(upd).eq('id', st.auth_id);
@@ -495,6 +535,8 @@ async function updateStudent(studentInternId, patch){
     required_hours: upd.required_hours ?? st.required_hours,
     active: upd.active ?? st.active,
     expected_time_in: upd.expected_time_in ?? st.expected_time_in,
+    expected_time_out: upd.expected_time_out ?? st.expected_time_out,
+    break_minutes: upd.break_minutes ?? st.break_minutes,
     avatar: upd.avatar_url ?? st.avatar,
     avatar_url: upd.avatar_url ?? st.avatar_url,
     name: upd.full_name ?? st.name,
@@ -662,30 +704,91 @@ async function adminManage(action, payload){
 // Stored per-browser in localStorage. Admin can override via Scanner settings.
 // ============================================================================
 const DEFAULT_OFFICE_SCHEDULE = {
-  start_time: '08:00',    // expected time-in
-  grace_minutes: 15,      // <= grace = Present; > grace = Late
-  absent_after_minutes: 60 // >= this past start = Absent
+  start_time: '08:00',      // expected time-in
+  end_time:   '17:00',      // expected time-out
+  grace_minutes: 15,        // <= grace = Present; > grace = Late
+  absent_after_minutes: 60, // >= this past start = Absent
+  break_minutes: 60         // unpaid break deducted from rendered hours
 };
-function getOfficeSchedule(){
+
+// Cached copy so every synchronous caller keeps working. Hydrated from the
+// `app_settings` table during bootstrap so a schedule saved by ONE admin
+// applies to EVERY admin device and every intern automatically.
+let __OFFICE_SCHEDULE__ = (function(){
   try {
     const raw = localStorage.getItem('naic_ojt_office_schedule');
     if(raw) return { ...DEFAULT_OFFICE_SCHEDULE, ...JSON.parse(raw) };
   } catch(_){}
   return { ...DEFAULT_OFFICE_SCHEDULE };
+})();
+
+function getOfficeSchedule(){ return { ...__OFFICE_SCHEDULE__ }; }
+
+async function loadOfficeSchedule(){
+  try {
+    const { data, error } = await sb.from('app_settings').select('value').eq('key','office_schedule').maybeSingle();
+    if(!error && data && data.value){
+      __OFFICE_SCHEDULE__ = { ...DEFAULT_OFFICE_SCHEDULE, ...data.value };
+      localStorage.setItem('naic_ojt_office_schedule', JSON.stringify(__OFFICE_SCHEDULE__));
+    }
+  } catch(_){}
+  return getOfficeSchedule();
 }
-function setOfficeSchedule(patch){
-  const merged = { ...getOfficeSchedule(), ...patch };
+
+// Persist globally (admin only). Falls back to a local save when the
+// app_settings table has not been created yet.
+async function setOfficeSchedule(patch){
+  const merged = { ...__OFFICE_SCHEDULE__, ...patch };
+  __OFFICE_SCHEDULE__ = merged;
   localStorage.setItem('naic_ojt_office_schedule', JSON.stringify(merged));
-  return merged;
+  try {
+    const { error } = await sb.from('app_settings')
+      .upsert({ key:'office_schedule', value: merged, updated_at: new Date().toISOString() }, { onConflict:'key' });
+    if(error) return { ok:false, error:error.message, schedule:merged };
+  } catch(e){
+    return { ok:false, error:e.message || 'Could not save globally.', schedule:merged };
+  }
+  return { ok:true, schedule:merged };
 }
+
+function breakMinutesFor(student){
+  const sch = getOfficeSchedule();
+  const v = student && student.break_minutes;
+  return (v == null || isNaN(v)) ? (sch.break_minutes == null ? 60 : sch.break_minutes) : Number(v);
+}
+
+function minutesOf(hhmm){
+  if(!hhmm) return null;
+  const [h,m] = String(hhmm).split(':').map(Number);
+  return h*60 + (m||0);
+}
+
 function classifyCheckIn(timeHHMM, expectedHHMM){
   const sch = getOfficeSchedule();
-  const [h,m] = timeHHMM.split(':').map(Number);
-  const [eh,em] = (expectedHHMM || sch.start_time).split(':').map(Number);
-  const now = h*60+m, expected = eh*60+em;
+  const now = minutesOf(timeHHMM);
+  const expected = minutesOf(expectedHHMM || sch.start_time);
   if(now - expected >= sch.absent_after_minutes) return 'absent';
   if(now - expected > sch.grace_minutes) return 'late';
   return 'present';
+}
+
+// Live status of an intern against the shift schedule for TODAY.
+// Returns { key, label } — used by the Scanner + Attendance screens.
+function shiftStatusFor(student, rec){
+  const sch = getOfficeSchedule();
+  const start = minutesOf((student && student.expected_time_in) || sch.start_time);
+  const end   = minutesOf((student && student.expected_time_out) || sch.end_time);
+  const d = new Date();
+  const now = d.getHours()*60 + d.getMinutes();
+
+  if(rec && rec.time_in && rec.time_out) return { key:'done',    label:'Completed' };
+  if(rec && rec.time_in)                 return { key:rec.status, label:rec.status==='late'?'Late (timed in)':'On time (timed in)' };
+
+  if(now < start)                                   return { key:'ahead',   label:'Ahead of shift' };
+  if(now <= start + sch.grace_minutes)              return { key:'pending', label:'Within schedule · Pending' };
+  if(now <  start + sch.absent_after_minutes)       return { key:'late',    label:'Late' };
+  if(end != null && now > end)                      return { key:'absent',  label:'Absent (shift ended)' };
+  return { key:'absent', label:'Absent (past cutoff)' };
 }
 
 // ============================================================================
@@ -808,4 +911,154 @@ async function deleteAdminAvatar(){
 // ============================================================================
 async function unarchiveStudent(studentInternId){
   return updateStudent(studentInternId, { active:true });
+}
+
+
+// ============================================================================
+// ADMIN — ATTENDANCE RECORD MANAGEMENT
+// Manual edits, soft delete (recoverable from the Archive page), restore and
+// permanent delete.
+// ============================================================================
+
+// Only students that ACTUALLY have a record on the given date.
+async function fetchAttendanceForDate(dateStr){
+  const { data, error } = await sb.from('attendance')
+    .select('*').eq('date', dateStr).is('deleted_at', null);
+  if(error) return { ok:false, error:error.message, rows:[] };
+  const internIdMap = new Map(window.__DB__.students.map(s=>[s.auth_id, s.id]));
+  const rows = (data||[]).map(a=>_mapAttendance(a, internIdMap));
+  // Keep the in-memory cache in sync for this date.
+  window.__DB__.attendance = window.__DB__.attendance.filter(a=>a.date!==dateStr).concat(rows);
+  return { ok:true, rows };
+}
+
+async function updateAttendanceRecord(recordId, patch){
+  const upd = {};
+  if('time_in'  in patch) upd.time_in  = patch.time_in  || null;
+  if('time_out' in patch) upd.time_out = patch.time_out || null;
+  if('status'   in patch) upd.status   = patch.status;
+  if('verified' in patch) upd.verified = !!patch.verified;
+
+  if(upd.time_in && upd.time_out){
+    const rec = window.__DB__.attendance.find(a=>a.id===recordId);
+    const st  = rec ? window.__DB__.students.find(s=>s.id===rec.student_id) : null;
+    const mins = minutesOf(upd.time_out) - minutesOf(upd.time_in) - breakMinutesFor(st);
+    upd.hours = +Math.max(0, mins/60).toFixed(2);
+  } else if('time_out' in patch && !upd.time_out){
+    upd.hours = 0;
+  }
+
+  const { data, error } = await sb.from('attendance').update(upd).eq('id', recordId).select().single();
+  if(error) return { ok:false, error:error.message };
+  const internIdMap = new Map(window.__DB__.students.map(s=>[s.auth_id, s.id]));
+  const mapped = _mapAttendance(data, internIdMap);
+  const idx = window.__DB__.attendance.findIndex(a=>a.id===recordId);
+  if(idx>=0) window.__DB__.attendance[idx] = mapped;
+  return { ok:true, record:mapped };
+}
+
+// Soft delete → the record moves to the Archive page.
+async function softDeleteAttendance(recordId){
+  const { error } = await sb.from('attendance')
+    .update({ deleted_at: new Date().toISOString() }).eq('id', recordId);
+  if(error) return { ok:false, error:error.message };
+  window.__DB__.attendance = window.__DB__.attendance.filter(a=>a.id!==recordId);
+  return { ok:true };
+}
+
+async function restoreAttendance(recordId){
+  const { data, error } = await sb.from('attendance')
+    .update({ deleted_at: null }).eq('id', recordId).select().single();
+  if(error) return { ok:false, error:error.message };
+  const internIdMap = new Map(window.__DB__.students.map(s=>[s.auth_id, s.id]));
+  const mapped = _mapAttendance(data, internIdMap);
+  if(!window.__DB__.attendance.some(a=>a.id===mapped.id)) window.__DB__.attendance.unshift(mapped);
+  return { ok:true, record:mapped };
+}
+
+async function purgeAttendance(recordId){
+  const { error } = await sb.from('attendance').delete().eq('id', recordId);
+  if(error) return { ok:false, error:error.message };
+  window.__DB__.attendance = window.__DB__.attendance.filter(a=>a.id!==recordId);
+  return { ok:true };
+}
+
+async function listDeletedAttendance(){
+  const { data, error } = await sb.from('attendance')
+    .select('*').not('deleted_at','is',null).order('deleted_at',{ascending:false});
+  if(error) return { ok:false, error:error.message, rows:[] };
+  const internIdMap = new Map(window.__DB__.students.map(s=>[s.auth_id, s.id]));
+  return { ok:true, rows:(data||[]).map(a=>_mapAttendance(a, internIdMap)) };
+}
+
+async function purgeAllDeletedAttendance(){
+  const { error } = await sb.from('attendance').delete().not('deleted_at','is',null);
+  if(error) return { ok:false, error:error.message };
+  return { ok:true };
+}
+
+// ============================================================================
+// SCANNER — TWO-SCAN WORKFLOW
+// 1st scan of the day  → Time In
+// 2nd scan of the day  → Time Out
+// ============================================================================
+async function scanAttendance(studentId){
+  const s = window.__DB__.students.find(x=>x.id===studentId);
+  if(!s) return { ok:false, error:'Student not found' };
+  if(!s.active) return { ok:false, error:'Account is archived/inactive' };
+
+  const rec = getTodayAttendance(studentId);
+  const t = nowTime();
+
+  // Second scan → Time Out
+  if(rec && rec.time_in){
+    if(rec.time_out) return { ok:true, already:true, kind:'out', time:rec.time_out, status:rec.status };
+    const mins = minutesOf(t) - minutesOf(rec.time_in) - breakMinutesFor(s);
+    const hours = +Math.max(0, mins/60).toFixed(2);
+    const { data, error } = await sb.from('attendance')
+      .update({ time_out:t, hours }).eq('id', rec.id).select().single();
+    if(error) return { ok:false, error:error.message };
+    rec.time_out = t; rec.hours = Number(data.hours || hours);
+    return { ok:true, kind:'out', time:t, hours:rec.hours, status:rec.status };
+  }
+
+  // First scan → Time In
+  const status = classifyCheckIn(t, s.expected_time_in);
+  const row = { student_id:s.auth_id, date:todayStr(), time_in:t, status, verified:true, hours:0, deleted_at:null };
+  const { data, error } = await sb.from('attendance').upsert(row, { onConflict:'student_id,date' }).select().single();
+  if(error) return { ok:false, error:error.message };
+  const mapped = _mapAttendance(data, new Map([[s.auth_id, s.id]]));
+  const idx = window.__DB__.attendance.findIndex(a=>a.student_id===studentId && a.date===todayStr());
+  if(idx>=0) window.__DB__.attendance[idx] = mapped; else window.__DB__.attendance.unshift(mapped);
+  return { ok:true, kind:'in', time:t, status };
+}
+
+// ============================================================================
+// BULK SCHEDULE ASSIGNMENT (Scanner page — apply to selected interns)
+// ============================================================================
+async function applyScheduleToStudents(internIds, schedule){
+  const patch = {};
+  if(schedule.expected_time_in)  patch.expected_time_in  = schedule.expected_time_in;
+  if(schedule.expected_time_out) patch.expected_time_out = schedule.expected_time_out;
+  if(schedule.break_minutes != null) patch.break_minutes = Number(schedule.break_minutes);
+  if(schedule.start_date) patch.start_date = schedule.start_date;
+  if(schedule.end_date)   patch.end_date   = schedule.end_date;
+
+  const failed = [];
+  for(const id of internIds){
+    const r = await updateStudent(id, patch);
+    if(!r.ok) failed.push(id + ': ' + r.error);
+  }
+  return failed.length
+    ? { ok:false, error:failed[0], failed }
+    : { ok:true, count:internIds.length };
+}
+
+// ============================================================================
+// ADMIN INVITATIONS — send an email invite link instead of a manual password
+// ============================================================================
+async function inviteAdmin(email, fullName){
+  if(!email || !email.includes('@')) return { ok:false, error:'Enter a valid email address.' };
+  const redirect = authUrl('login-admin.html');
+  return adminManage('invite', { email:email.trim().toLowerCase(), full_name:(fullName||'').trim(), redirect_to: redirect });
 }
