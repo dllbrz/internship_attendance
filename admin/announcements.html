@@ -36,13 +36,38 @@ async function render(){
               <button class="btn btn-outline btn-sm" onclick="edit('${a.id}')">Edit</button>
               <button class="btn btn-outline btn-sm" style="color:#c53030;border-color:#c53030" onclick="del('${a.id}')">Delete</button>
             </div>
-            <div style="font-weight:700;color:var(--blue-900)">${a.title}</div>
-            <div class="text-sm text-muted">${fmtDate(a.date)} · ${a.author||'Admin'}</div>
-            <div class="text-sm mt-2">${a.body}</div></div>`).join('') || '<div class="text-muted">No announcements yet.</div>'}
+            <div style="font-weight:700;color:var(--blue-900)">${escapeHtml(a.title)}</div>
+            <div class="text-sm text-muted">${fmtDate(a.date)} · ${escapeHtml(a.author||'Admin')}</div>
+            <div class="text-sm mt-2">${escapeHtml(a.body)}</div></div>`).join('') || '<div class="text-muted">No announcements yet.</div>'}
           </div>
         </div>
       </div>
-    </main>`;
+    </main>
+
+    <!-- Single pop-up that edits BOTH the title and the message -->
+    <div class="modal" id="editModal">
+      <div class="modal-inner" style="max-width:520px">
+        <div class="modal-head">
+          <h3>Edit Announcement</h3>
+          <button class="close-x" onclick="closeModal('editModal')" aria-label="Close dialog">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label for="e_title">Title</label>
+            <input class="form-control" id="e_title" maxlength="120">
+          </div>
+          <div class="form-group">
+            <label for="e_body">Message</label>
+            <textarea class="form-control" id="e_body" rows="6"></textarea>
+          </div>
+          <div class="form-error" id="e_err" role="alert"></div>
+        </div>
+        <div class="modal-foot">
+          <button class="btn btn-outline" onclick="closeModal('editModal')">Cancel</button>
+          <button class="btn btn-primary" id="e_save" onclick="saveEdit()">Save Changes</button>
+        </div>
+      </div>
+    </div>`;
   startClock('#clockBox');
 }
 
@@ -56,16 +81,35 @@ async function post(e){
   toast('Announcement posted','success');
   render();
 }
-async function edit(id){
+let EDIT_ID = null;
+function edit(id){
   const a = window.__DB__.announcements.find(x=>x.id===id); if(!a) return;
-  const title = prompt('Title:', a.title); if(title===null) return;
-  const body  = prompt('Message:', a.body);  if(body===null)  return;
-  const r = await updateAnnouncement(id, { title, body });
-  if(!r.ok){ toast(r.error,'error'); return; }
-  toast('Updated.','success'); render();
+  EDIT_ID = id;
+  document.getElementById('e_title').value = a.title || '';
+  document.getElementById('e_body').value  = a.body || '';
+  document.getElementById('e_err').textContent = '';
+  openModal('editModal');
+  setTimeout(()=>document.getElementById('e_title').focus(), 50);
+}
+async function saveEdit(){
+  const title = document.getElementById('e_title').value.trim();
+  const body  = document.getElementById('e_body').value.trim();
+  const err   = document.getElementById('e_err');
+  if(!title){ err.textContent = 'Title is required.'; return; }
+  if(!body){ err.textContent = 'Message is required.'; return; }
+  const btn = document.getElementById('e_save');
+  btn.disabled = true; btn.textContent = 'Saving…';
+  const r = await updateAnnouncement(EDIT_ID, { title, body });
+  btn.disabled = false; btn.textContent = 'Save Changes';
+  if(!r.ok){ err.textContent = r.error; return; }
+  closeModal('editModal');
+  toast('Announcement updated.','success');
+  render();
 }
 async function del(id){
-  if(!confirm('Delete this announcement?')) return;
+  const a = window.__DB__.announcements.find(x=>x.id===id);
+  const ok = await confirmDelete(`Delete the announcement “${a ? a.title : ''}”? Interns will no longer see it.`, 'Delete announcement');
+  if(!ok) return;
   const r = await deleteAnnouncement(id);
   if(!r.ok){ toast(r.error,'error'); return; }
   toast('Deleted.','success'); render();
