@@ -41,11 +41,15 @@ async function render(){
         </div>
 
         <div class="form-group">
-          <label>Select one or more files</label>
-          <input type="file" id="files" class="form-control" multiple accept=".pdf,.doc,.docx,.jpg,.jpeg,.png">
+          <label for="files">Select one or more files</label>
+          <input type="file" id="files" class="form-control" multiple accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" onchange="onPick(this)">
+          <div class="file-chips" id="chips" aria-live="polite"></div>
         </div>
-        <button class="btn btn-primary" id="upBtn" onclick="doUpload()">Upload Files</button>
-        <div id="progress" style="margin-top:10px;font-size:13px;color:var(--gray-700)"></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-primary" id="upBtn" onclick="doUpload()">Upload Files</button>
+          <button class="btn btn-outline" id="clearBtn" onclick="clearPicked()" style="display:none">Cancel All</button>
+        </div>
+        <div id="progress" style="margin-top:10px;font-size:13px;color:var(--gray-700)" aria-live="polite"></div>
       </div>
 
       <div class="card mt-4">
@@ -67,6 +71,43 @@ async function render(){
       </div>
     </main>`;
   startClock('#clockBox');
+  drawChips();
+}
+
+/* ---- staged files: each chip has an "x" to cancel it before uploading ---- */
+let PICKED = [];
+
+function onPick(input){
+  PICKED = PICKED.concat(Array.from(input.files || []));
+  input.value = '';            // allow re-picking the same file after a cancel
+  drawChips();
+}
+function cancelPick(i){
+  const f = PICKED[i];
+  PICKED.splice(i,1);
+  drawChips();
+  if(f) toast(`Removed “${f.name}”.`,'info');
+}
+function clearPicked(){
+  if(!PICKED.length) return;
+  PICKED = [];
+  drawChips();
+  toast('Selection cleared.','info');
+}
+function drawChips(){
+  const wrap = document.getElementById('chips');
+  if(!wrap) return;
+  wrap.innerHTML = PICKED.map((f,i)=>`
+    <span class="file-chip">
+      <span title="${escapeAttr(f.name)}">${escapeHtml(f.name)}</span>
+      <small class="text-muted">${humanSize(f.size)}</small>
+      <button type="button" onclick="cancelPick(${i})" title="Remove this file"
+              aria-label="Remove ${escapeAttr(f.name)} from the upload list">×</button>
+    </span>`).join('');
+  const clear = document.getElementById('clearBtn');
+  if(clear) clear.style.display = PICKED.length ? '' : 'none';
+  const btn = document.getElementById('upBtn');
+  if(btn) btn.textContent = PICKED.length ? `Upload ${PICKED.length} File${PICKED.length===1?'':'s'}` : 'Upload Files';
 }
 
 function onTypeChange(){
@@ -84,7 +125,7 @@ function resolveLabel(){
 }
 
 async function doUpload(){
-  const files = document.getElementById('files').files;
+  const files = PICKED;
   if(!files.length){ toast('Please pick at least one file.','error'); return; }
   const label = resolveLabel();
   if(!label){ toast('Please select a document type.','error'); return; }
@@ -96,13 +137,18 @@ async function doUpload(){
     const r = await addStudentRequirement(CURRENT.id, files[i], label);
     if(r.ok) ok++; else fail++;
   }
+  prog.textContent = '';
+  PICKED = [];
   toast(`${ok} uploaded${fail?`, ${fail} failed`:''}.`, fail?'error':'success');
   render();
 }
 async function delFile(id){
-  if(!confirm('Delete this file?')) return;
-  await deleteStudentRequirement(CURRENT.id, id);
-  toast('Deleted.','success'); render();
+  const req = (CURRENT.requirements||[]).find(r=>r.id===id);
+  const ok = await confirmDelete(`Delete “${req ? req.name : 'this file'}”? This cannot be undone.`, 'Delete uploaded file');
+  if(!ok) return;
+  const r = await deleteStudentRequirement(CURRENT.id, id);
+  if(r && r.ok === false){ toast(r.error,'error'); return; }
+  toast('File deleted.','success'); render();
 }
 async function renameFile(id, currentName){
   const newName = prompt('New file name:', currentName);
