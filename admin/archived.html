@@ -13,67 +13,125 @@
 <script src="../js/data.js"></script>
 <script src="../js/app.js"></script>
 <script>
+let VIEW = location.hash === '#attendance' ? 'attendance' : 'interns';
+let DELETED = [];
+
 async function render(){
   const admin = await requireAdmin(); if(!admin) return;
-  const db = getDB();
-  // Archived = interns whose account was archived by an admin (active=false)
-  const list = db.students.filter(s => s.active === false);
 
   document.getElementById('shell').innerHTML = renderSidebar('admin','archived') + `
     <main class="main">
-      ${renderTopbar('Archived', 'Interns archived from the active list. Restore or permanently delete records here.')}
+      ${renderTopbar('Archived', 'Archived interns and deleted attendance records. Restore them or delete permanently.')}
+
       <div class="card">
-        <div class="card-title">Archived Interns (${list.length})</div>
-        <div class="table-wrap"><table class="table">
-          <thead><tr><th>ID</th><th>Name</th><th>School</th><th>Period</th><th>Rendered</th><th style="text-align:right">Actions</th></tr></thead>
-          <tbody id="rows"></tbody>
-        </table></div>
+        <div class="status-tabs">
+          <button class="status-tab" data-view="interns" onclick="switchView('interns')">
+            Archived Interns <span class="count" id="cnt-interns">0</span>
+          </button>
+          <button class="status-tab" data-view="attendance" onclick="switchView('attendance')">
+            <span style="display:inline-flex;vertical-align:-4px;width:16px;height:16px;margin-right:4px" aria-hidden="true">${ICONS.file}</span>
+            Deleted Records <span class="count" id="cnt-attendance">0</span>
+          </button>
+        </div>
+
+        <!-- Archived interns -->
+        <div id="pane-interns">
+          <div class="table-wrap"><table class="table">
+            <thead><tr>
+              <th scope="col">ID</th><th scope="col">Name</th><th scope="col">School</th>
+              <th scope="col">Period</th><th scope="col">Rendered</th>
+              <th scope="col" style="text-align:right">Actions</th>
+            </tr></thead>
+            <tbody id="rows"></tbody>
+          </table></div>
+        </div>
+
+        <!-- Deleted attendance records -->
+        <div id="pane-attendance" style="display:none">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+            <p class="text-sm text-muted" style="margin:0">
+              Attendance records deleted by an admin. Restore puts them back on the Attendance page.
+            </p>
+            <div style="display:flex;gap:8px">
+              <button class="btn btn-outline btn-sm" onclick="loadDeleted()">Refresh</button>
+              <button class="btn btn-sm" style="background:#c53030;color:#fff" onclick="emptyArchive()">Empty archive</button>
+            </div>
+          </div>
+          <div class="table-wrap"><table class="table">
+            <thead><tr>
+              <th scope="col">Date</th><th scope="col">Intern ID</th><th scope="col">Name</th>
+              <th scope="col">Time In</th><th scope="col">Time Out</th>
+              <th scope="col">Status</th><th scope="col" style="text-align:right">Actions</th>
+            </tr></thead>
+            <tbody id="delRows"><tr><td colspan="7" class="text-center text-muted" style="padding:20px">Loading…</td></tr></tbody>
+          </table></div>
+        </div>
       </div>
     </main>
 
     <div class="modal" id="profileModal">
       <div class="modal-inner" style="max-width:560px">
-        <div class="modal-head"><h3>Archived Intern</h3><button class="close-x" onclick="closeModal('profileModal')">×</button></div>
+        <div class="modal-head">
+          <h3>Archived Intern</h3>
+          <button class="close-x" onclick="closeModal('profileModal')" aria-label="Close dialog">×</button>
+        </div>
         <div class="modal-body" id="profileBody"></div>
-        <div class="modal-foot"><button class="btn btn-outline" onclick="closeModal('profileModal')">Close</button></div>
       </div>
     </div>
 
     <div class="modal" id="confirmDel">
       <div class="modal-inner" style="max-width:440px">
-        <div class="modal-head"><h3>Permanently delete record?</h3><button class="close-x" onclick="closeModal('confirmDel')">×</button></div>
+        <div class="modal-head">
+          <h3>Permanently delete record?</h3>
+          <button class="close-x" onclick="closeModal('confirmDel')" aria-label="Close dialog">×</button>
+        </div>
         <div class="modal-body">
           <p>This will <strong>permanently remove</strong> <span id="delName" style="color:var(--blue-900);font-weight:700"></span> and all of their attendance and requirement records. This action cannot be undone.</p>
           <div class="form-group" style="margin-top:12px">
-            <label>Type <code>DELETE</code> to confirm</label>
+            <label for="delConfirm">Type <code>DELETE</code> to confirm</label>
             <input class="form-control" id="delConfirm" placeholder="DELETE" autocomplete="off">
           </div>
-          <div class="form-error" id="delErr"></div>
+          <div class="form-error" id="delErr" role="alert"></div>
         </div>
         <div class="modal-foot">
           <button class="btn btn-outline" onclick="closeModal('confirmDel')">Cancel</button>
-          <button class="btn" style="background:#c53030;color:#fff" onclick="confirmDelete()">Delete permanently</button>
+          <button class="btn" style="background:#c53030;color:#fff" onclick="confirmPurgeStudent()">Delete permanently</button>
         </div>
       </div>
     </div>`;
   startClock('#clockBox');
+  applyView();
   drawRows();
+  await loadDeleted();
 }
 
+function switchView(v){
+  VIEW = v;
+  history.replaceState(null,'', v==='attendance' ? '#attendance' : '#interns');
+  applyView();
+}
+function applyView(){
+  document.querySelectorAll('.status-tab').forEach(b=>b.classList.toggle('active', b.dataset.view===VIEW));
+  document.getElementById('pane-interns').style.display    = VIEW==='interns' ? '' : 'none';
+  document.getElementById('pane-attendance').style.display = VIEW==='attendance' ? '' : 'none';
+}
+
+/* ---------------------------- archived interns ---------------------------- */
 function drawRows(){
   const list = getDB().students.filter(s => s.active === false);
+  document.getElementById('cnt-interns').textContent = list.length;
   document.getElementById('rows').innerHTML = list.length ? list.map(s => {
     const done = totalHours(s.id);
     return `<tr>
-      <td style="font-weight:700;color:var(--blue-800)">${s.id}</td>
-      <td><div class="cell-name">${profileIconHTML(s,30)}<span class="name-text">${s.name}</span><div class="text-muted text-sm" style="margin-left:8px">${s.course||''}</div></div></td>
-      <td>${s.school||'—'}</td>
+      <td style="font-weight:700;color:var(--blue-800)">${escapeHtml(s.id)}</td>
+      <td><div class="cell-name">${profileIconHTML(s,30)}<span class="name-text">${escapeHtml(s.name)}</span><div class="text-muted text-sm" style="margin-left:8px">${escapeHtml(s.course||'')}</div></div></td>
+      <td>${escapeHtml(s.school||'—')}</td>
       <td class="text-sm">${fmtDate(s.start_date)}<br><span class="text-muted">to ${fmtDate(s.end_date)}</span></td>
       <td><span class="pill ${done>=s.required_hours?'green':'gray'}">${done}/${s.required_hours} hrs</span></td>
       <td style="text-align:right;white-space:nowrap">
-        <button class="btn btn-outline btn-sm" onclick="showProfile('${s.id}')">View</button>
-        <button class="btn btn-primary btn-sm" onclick="unarchive('${s.id}')">Unarchive</button>
-        <button class="btn btn-sm" style="background:#c53030;color:#fff" onclick="askDelete('${s.id}')">Delete Record</button>
+        <button class="btn btn-outline btn-sm" onclick="showProfile('${escapeAttr(s.id)}')">View</button>
+        <button class="btn btn-primary btn-sm" onclick="unarchive('${escapeAttr(s.id)}')">Unarchive</button>
+        <button class="btn btn-sm" style="background:#c53030;color:#fff" onclick="askDelete('${escapeAttr(s.id)}')">Delete Record</button>
       </td>
     </tr>`;
   }).join('') : '<tr><td colspan="6" class="text-center text-muted" style="padding:24px">No archived interns.</td></tr>';
@@ -85,17 +143,18 @@ function showProfile(id){
   document.getElementById('profileBody').innerHTML = `
     <div style="display:flex;gap:14px;align-items:center;margin-bottom:14px">
       ${profileIconHTML(s,64)}
-      <div><div style="font-size:17px;font-weight:700;color:var(--blue-900)">${s.name}</div>
-      <div class="text-muted">${s.id}</div></div>
+      <div><div style="font-size:17px;font-weight:700;color:var(--blue-900)">${escapeHtml(s.name)}</div>
+      <div class="text-muted">${escapeHtml(s.id)}</div></div>
     </div>
     <div class="profile-view">
-      <div class="pv-row"><span>Email</span><strong>${s.email||'—'}</strong></div>
-      <div class="pv-row"><span>Phone</span><strong>${s.phone||'—'}</strong></div>
-      <div class="pv-row"><span>School</span><strong>${s.school||'—'}</strong></div>
-      <div class="pv-row"><span>Course</span><strong>${s.course||'—'}</strong></div>
-      <div class="pv-row"><span>Adviser</span><strong>${s.adviser_name||'—'}</strong></div>
-      <div class="pv-row"><span>Adviser Contact</span><strong>${s.adviser_contact||'—'}</strong></div>
+      <div class="pv-row"><span>Email</span><strong>${escapeHtml(s.email||'—')}</strong></div>
+      <div class="pv-row"><span>Phone</span><strong>${escapeHtml(s.phone||'—')}</strong></div>
+      <div class="pv-row"><span>School</span><strong>${escapeHtml(s.school||'—')}</strong></div>
+      <div class="pv-row"><span>Course</span><strong>${escapeHtml(s.course||'—')}</strong></div>
+      <div class="pv-row"><span>Adviser</span><strong>${escapeHtml(s.adviser_name||'—')}</strong></div>
+      <div class="pv-row"><span>Adviser Contact</span><strong>${escapeHtml(s.adviser_contact||'—')}</strong></div>
       <div class="pv-row"><span>OJT Period</span><strong>${fmtDate(s.start_date)} – ${fmtDate(s.end_date)}</strong></div>
+      <div class="pv-row"><span>Shift</span><strong>${fmt12(s.expected_time_in)} – ${fmt12(s.expected_time_out)} · ${s.break_minutes||0} min break</strong></div>
       <div class="pv-row"><span>Required Hours</span><strong>${s.required_hours} hrs</strong></div>
       <div class="pv-row"><span>Rendered Hours</span><strong>${done} hrs</strong></div>
     </div>`;
@@ -103,7 +162,13 @@ function showProfile(id){
 }
 
 async function unarchive(id){
-  if(!confirm('Restore this intern to the active Students list?')) return;
+  const s = getDB().students.find(x=>x.id===id);
+  const ok = await confirmDialog({
+    title:'Restore intern',
+    message:`Restore ${s ? s.name : 'this intern'} to the active Students list?`,
+    confirmText:'Restore'
+  });
+  if(!ok) return;
   const r = await unarchiveStudent(id);
   if(!r.ok){ toast(r.error,'error'); return; }
   toast('Intern restored to active list.','success');
@@ -119,7 +184,7 @@ function askDelete(id){
   document.getElementById('delErr').textContent = '';
   openModal('confirmDel');
 }
-async function confirmDelete(){
+async function confirmPurgeStudent(){
   const val = document.getElementById('delConfirm').value.trim();
   if(val !== 'DELETE'){ document.getElementById('delErr').textContent = 'Please type DELETE to confirm.'; return; }
   const r = await deleteStudent(PENDING_DEL);
@@ -127,6 +192,79 @@ async function confirmDelete(){
   closeModal('confirmDel'); PENDING_DEL = null;
   toast('Record permanently deleted.','success');
   drawRows();
+}
+
+/* ------------------------ deleted attendance records ---------------------- */
+async function loadDeleted(){
+  const r = await listDeletedAttendance();
+  if(!r.ok){ toast(r.error,'error'); DELETED = []; }
+  else DELETED = r.rows;
+  drawDeleted();
+}
+
+function drawDeleted(){
+  document.getElementById('cnt-attendance').textContent = DELETED.length;
+  const body = document.getElementById('delRows');
+  if(!DELETED.length){
+    body.innerHTML = '<tr><td colspan="7" class="text-center text-muted" style="padding:24px">No deleted attendance records.</td></tr>';
+    return;
+  }
+  body.innerHTML = DELETED.map(a=>{
+    const s = getDB().students.find(x=>x.id===a.student_id);
+    const name = s ? s.name : '—';
+    return `<tr>
+      <td>${fmtDate(a.date)}</td>
+      <td style="font-weight:700;color:var(--blue-800)">${escapeHtml(a.student_id)}</td>
+      <td>${escapeHtml(name)}</td>
+      <td>${fmt12(a.time_in)}</td>
+      <td>${fmt12(a.time_out)}</td>
+      <td><span class="badge badge-${a.status}">${a.status.charAt(0).toUpperCase()+a.status.slice(1)}</span></td>
+      <td style="text-align:right;white-space:nowrap">
+        <button class="btn-icon" onclick="restoreRec('${escapeAttr(a.id)}')" title="Restore record" aria-label="Restore ${escapeAttr(name)} record for ${fmtDate(a.date)}">${ICONS.restore}</button>
+        <button class="btn-icon danger" onclick="purgeRec('${escapeAttr(a.id)}')" title="Delete permanently" aria-label="Permanently delete ${escapeAttr(name)} record for ${fmtDate(a.date)}">${ICONS.trash}</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+async function restoreRec(id){
+  const a = DELETED.find(x=>x.id===id); if(!a) return;
+  const ok = await confirmDialog({
+    title:'Restore attendance record',
+    message:`Put the ${fmtDate(a.date)} record for ${a.student_id} back on the Attendance page?`,
+    confirmText:'Restore'
+  });
+  if(!ok) return;
+  DELETED = DELETED.filter(x=>x.id!==id); drawDeleted();
+  const r = await restoreAttendance(id);
+  if(!r.ok){ toast(r.error,'error'); await loadDeleted(); return; }
+  toast('Record restored.','success');
+}
+
+async function purgeRec(id){
+  const a = DELETED.find(x=>x.id===id); if(!a) return;
+  const ok = await confirmDelete(
+    `Permanently delete the ${fmtDate(a.date)} record for ${a.student_id}? This cannot be undone.`,
+    'Delete permanently'
+  );
+  if(!ok) return;
+  DELETED = DELETED.filter(x=>x.id!==id); drawDeleted();
+  const r = await purgeAttendance(id);
+  if(!r.ok){ toast(r.error,'error'); await loadDeleted(); return; }
+  toast('Record permanently deleted.','success');
+}
+
+async function emptyArchive(){
+  if(!DELETED.length){ toast('The archive is already empty.','info'); return; }
+  const ok = await confirmDelete(
+    `Permanently delete all ${DELETED.length} archived attendance record(s)? This cannot be undone.`,
+    'Empty archive'
+  );
+  if(!ok) return;
+  const r = await purgeAllDeletedAttendance();
+  if(!r.ok){ toast(r.error,'error'); return; }
+  DELETED = []; drawDeleted();
+  toast('Archive emptied.','success');
 }
 
 render();
