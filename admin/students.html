@@ -35,16 +35,33 @@ async function render(){
       <div class="modal-inner" style="max-width:460px">
         <div class="modal-head">
           <h3>Edit Student Schedule</h3>
-          <button class="close-x" onclick="closeModal('editModal')">×</button>
+          <button class="close-x" onclick="closeModal('editModal')" aria-label="Close dialog">×</button>
         </div>
         <div class="modal-body">
-          <p class="text-muted text-sm">Only OJT schedule and required hours can be edited here.</p>
+          <p class="text-muted text-sm">Set the OJT period, daily shift and the unpaid break deducted from rendered hours.</p>
           <input type="hidden" id="e_id">
           <div id="e_name" style="font-weight:700;color:var(--blue-900);margin-bottom:12px"></div>
-          <div class="form-group"><label>Start Date</label><input type="date" class="form-control" id="e_start"></div>
-          <div class="form-group"><label>End Date</label><input type="date" class="form-control" id="e_end"></div>
-          <div class="form-group"><label>Required Hours</label><input type="number" class="form-control" id="e_hours" min="1"></div>
-          <div class="form-error" id="e_err"></div>
+          <div class="form-row">
+            <div class="form-group"><label for="e_start">Start Date</label><input type="date" class="form-control" id="e_start"></div>
+            <div class="form-group"><label for="e_end">End Date</label><input type="date" class="form-control" id="e_end"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label for="e_tin">Shift Time In</label><input type="time" class="form-control" id="e_tin"></div>
+            <div class="form-group"><label for="e_tout">Shift Time Out</label><input type="time" class="form-control" id="e_tout"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label for="e_break">Break (minutes)</label>
+              <select class="form-control" id="e_break">
+                <option value="0">No break</option>
+                <option value="30">30 minutes</option>
+                <option value="60">1 hour (default)</option>
+                <option value="90">1 hour 30 minutes</option>
+              </select>
+            </div>
+            <div class="form-group"><label for="e_hours">Required Hours</label><input type="number" class="form-control" id="e_hours" min="1"></div>
+          </div>
+          <p class="text-sm text-muted" id="e_preview" aria-live="polite"></p>
+          <div class="form-error" id="e_err" role="alert"></div>
         </div>
         <div class="modal-foot">
           <button class="btn btn-outline" onclick="closeModal('editModal')">Cancel</button>
@@ -101,7 +118,7 @@ function drawRows(){
       </td>
       <td>${s.school||'—'}</td>
       <td>${s.course||'—'}</td>
-      <td>${fmtDate(s.start_date)} – ${fmtDate(s.end_date)}</td>
+      <td>${fmtDate(s.start_date)} – ${fmtDate(s.end_date)}<div class="text-muted text-sm">${fmt12(s.expected_time_in)} – ${fmt12(s.expected_time_out)} · ${s.break_minutes||0}m break</div></td>
       <td>${s.required_hours}</td>
       <td><button class="btn btn-outline btn-sm" onclick="viewDocs('${s.id}')">View (${n})</button></td>
       <td style="white-space:nowrap">
@@ -119,21 +136,65 @@ function openEdit(id){
   document.getElementById('e_start').value = s.start_date;
   document.getElementById('e_end').value = s.end_date;
   document.getElementById('e_hours').value = s.required_hours;
+  document.getElementById('e_tin').value = s.expected_time_in || '08:00';
+  document.getElementById('e_tout').value = s.expected_time_out || '17:00';
+  document.getElementById('e_break').value = String(s.break_minutes == null ? 60 : s.break_minutes);
+  document.getElementById('e_err').textContent = '';
+  ['e_tin','e_tout','e_break'].forEach(id=>{
+    const el = document.getElementById(id);
+    el.oninput = updatePreview; el.onchange = updatePreview;
+  });
+  updatePreview();
   openModal('editModal');
+}
+function shiftMinutes(){
+  const a = document.getElementById('e_tin').value;
+  const b = document.getElementById('e_tout').value;
+  if(!a || !b) return null;
+  const [ah,am]=a.split(':').map(Number), [bh,bm]=b.split(':').map(Number);
+  return (bh*60+bm) - (ah*60+am);
+}
+function updatePreview(){
+  const span = shiftMinutes();
+  const brk = +document.getElementById('e_break').value || 0;
+  const el = document.getElementById('e_preview');
+  if(span == null){ el.textContent = ''; return; }
+  if(span <= 0){ el.textContent = 'Time out must be later than time in.'; return; }
+  const net = Math.max(0, span - brk);
+  el.textContent = `Daily credited hours: ${(net/60).toFixed(2)} hrs (${(span/60).toFixed(2)} hrs shift \u2212 ${brk} min break).`;
 }
 async function saveEdit(){
   const id = document.getElementById('e_id').value;
-  const patch = {
-    start_date: document.getElementById('e_start').value,
-    end_date: document.getElementById('e_end').value,
-    required_hours: +document.getElementById('e_hours').value,
-  };
-  const r = await updateStudent(id, patch);
-  if(!r.ok){ document.getElementById('e_err').textContent = r.error; return; }
-  closeModal('editModal'); toast('Student updated.','success'); drawRows();
+  const err = document.getElementById('e_err');
+  const start = document.getElementById('e_start').value;
+  const end   = document.getElementById('e_end').value;
+  const tin   = document.getElementById('e_tin').value;
+  const tout  = document.getElementById('e_tout').value;
+  const brk   = +document.getElementById('e_break').value;
+  const hours = +document.getElementById('e_hours').value;
+
+  if(!start || !end){ err.textContent = 'Start and end dates are required.'; return; }
+  if(end < start){ err.textContent = 'End date cannot be before the start date.'; return; }
+  if(!tin || !tout){ err.textContent = 'Shift time in and time out are required.'; return; }
+  if(shiftMinutes() <= 0){ err.textContent = 'Shift time out must be later than time in.'; return; }
+  if(shiftMinutes() <= brk){ err.textContent = 'The break is longer than the shift.'; return; }
+  if(!hours || hours < 1){ err.textContent = 'Required hours must be at least 1.'; return; }
+
+  const r = await updateStudent(id, {
+    start_date:start, end_date:end, required_hours:hours,
+    expected_time_in:tin, expected_time_out:tout, break_minutes:brk
+  });
+  if(!r.ok){ err.textContent = r.error; return; }
+  closeModal('editModal'); toast('Schedule updated.','success'); drawRows();
 }
 async function archive(id){
-  if(!confirm('Archive this student?')) return;
+  const st = window.__DB__.students.find(x=>x.id===id);
+  const ok = await confirmDialog({
+    title:'Archive intern',
+    message:`Archive ${st ? st.name : 'this intern'}? They move to the Archived page and can be restored later.`,
+    confirmText:'Archive'
+  });
+  if(!ok) return;
   const r = await updateStudent(id, { active:false });
   if(!r.ok){ toast(r.error,'error'); return; }
   toast('Student archived.','success'); drawRows();
@@ -179,7 +240,8 @@ function viewProfile(id){
       <div><div class="text-muted text-sm">Adviser</div><div>${s.adviser_name||'—'}</div></div>
       <div><div class="text-muted text-sm">Adviser Contact</div><div>${s.adviser_contact||'—'}</div></div>
       <div><div class="text-muted text-sm">OJT Period</div><div>${fmtDate(s.start_date)} – ${fmtDate(s.end_date)}</div></div>
-      <div><div class="text-muted text-sm">Expected Time In</div><div>${fmt12(s.expected_time_in)}</div></div>
+      <div><div class="text-muted text-sm">Shift</div><div>${fmt12(s.expected_time_in)} – ${fmt12(s.expected_time_out)}</div></div>
+      <div><div class="text-muted text-sm">Break</div><div>${s.break_minutes||0} minutes</div></div>
       <div><div class="text-muted text-sm">Required Hours</div><div>${s.required_hours}</div></div>
       <div><div class="text-muted text-sm">Rendered Hours</div><div>${rendered}</div></div>
       <div style="grid-column:1/-1"><div class="text-muted text-sm">Address</div><div>${s.address||'—'}</div></div>
