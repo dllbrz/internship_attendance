@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Notifications — Intern · Naic OJT</title>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../css/styles.css">
+</head>
+<body>
+<div class="app-shell" id="shell"><div style="padding:40px;text-align:center">Loading…</div></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../js/supabase-config.js"></script>
+<script src="../js/data.js"></script>
+<script src="../js/app.js"></script>
+<script>
+(async()=>{
+const u=await requireStudent();
+if(u){
+  const db=getDB();
+  const anns=db.announcements.slice().sort((a,b)=>b.date.localeCompare(a.date));
+  const today=getTodayAttendance(u.id);
+  const updates=[];
+  if(today && today.time_in) updates.push({icon:'',title:'You timed in today at '+fmt12(today.time_in),date:today.date,type:'success'});
+  if(today && today.time_out) updates.push({icon:'',title:'You timed out today at '+fmt12(today.time_out)+' (+'+today.hours+' hrs)',date:today.date,type:'info'});
+  if(!today) updates.push({icon:'️',title:'You have not timed in yet today.',date:todayStr(),type:'warn'});
+  const totalDone=totalHours(u.id); const remaining=u.required_hours-totalDone;
+  if(remaining<=40 && remaining>0) updates.push({icon:'',title:'Almost done! '+remaining.toFixed(2)+' hours to go.',date:todayStr(),type:'success'});
+
+  document.getElementById('shell').innerHTML = renderSidebar('student','notifications') + `
+    <main class="main">
+      ${renderTopbar('Notifications','Announcements and attendance updates.')}
+      <div class="card-grid-2">
+        <div class="card"><div class="card-head"><div class="card-title"> Announcements</div><div class="card-subtitle">${anns.length}</div></div>
+          ${anns.map(a=>`<div style="padding:14px;border-left:3px solid var(--yellow);background:var(--blue-50);margin-bottom:10px;border-radius:6px">
+          <div style="font-weight:700;color:var(--blue-900)">${a.title}</div>
+          <div class="text-sm text-muted">${fmtDate(a.date)} · ${a.author}</div>
+          <div class="text-sm mt-2">${a.body}</div></div>`).join('') || '<div class="text-muted">No announcements.</div>'}
+        </div>
+        <div class="card"><div class="card-head"><div class="card-title"> Attendance Updates</div></div>
+          ${updates.map(u=>`<div style="padding:12px;border-radius:8px;background:var(--gray-100);margin-bottom:8px;display:flex;gap:12px;align-items:center">
+          <div style="font-size:22px">${u.icon}</div><div><div style="font-weight:600">${u.title}</div><div class="text-muted text-sm">${fmtDate(u.date)}</div></div></div>`).join('')}
+        </div>
+      </div>
+    </main>`;
+  startClock('#clockBox');
+}
+})();
+</script>
+</body></html>
