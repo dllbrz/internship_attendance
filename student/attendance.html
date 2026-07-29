@@ -87,5 +87,6 @@ async function doOut(){ const u=await requireStudent(); const r=await timeOut(u.
 async function csv(){ const u=await requireStudent(); const rows=[['Date','Time In','Time Out','Hours','Status']]; studentAttendance(u.id).forEach(r=>rows.push([r.date,r.time_in||'',r.time_out||'',r.hours||0,r.status])); exportCSV(u.id+'-attendance.csv',rows);}
 async function pdf(){ const u=await requireStudent(); const rows=studentAttendance(u.id).map(r=>[fmtDate(r.date),fmt12(r.time_in),fmt12(r.time_out),r.hours||'—',r.status.toUpperCase()]); exportPDF(u.id+'-attendance.pdf','Attendance History — '+u.name,['Date','Time In','Time Out','Hours','Status'],rows);}
 render();
+  subscribeRealtime(() => render());
 </script>
 </body></html>
