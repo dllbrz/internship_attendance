@@ -162,6 +162,7 @@ async function openFile(path){
   if(url) window.open(url,'_blank'); else toast('Cannot open file.','error');
 }
 render();
+  subscribeRealtime(() => render());
 </script>
 </body>
 </html>
