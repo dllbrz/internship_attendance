@@ -87,7 +87,7 @@ function renderSidebar(kind, active){
         <div class="brand-badge"><img src="../assets/naic-engineering-logo.png" alt="Naic Engineering Office seal"></div>
         <div class="brand-text">
           <small>${kind==='student'?'OJT Intern':'Admin Panel'}</small>
-          <strong>Naic OJT</strong>
+          <strong>Engineering Office</strong>
         </div>
       </div>
       <nav class="sidebar-nav">
@@ -187,8 +187,8 @@ function exportPDF(filename, title, headers, rows){
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF();
   doc.setFillColor(10,31,68); doc.rect(0,0,210,26,'F');
-  doc.setTextColor(253,194,43); doc.setFontSize(16); doc.text('Naic OJT Attendance System', 14, 12);
-  doc.setTextColor(255,255,255); doc.setFontSize(10); doc.text('Municipality of Naic, Cavite', 14, 20);
+  doc.setTextColor(253,194,43); doc.setFontSize(16); doc.text('Engineering Office Attendance System', 14, 12);
+  doc.setTextColor(255,255,255); doc.setFontSize(10); doc.text('Municipal Engineering Office', 14, 20);
   doc.setTextColor(20,20,20); doc.setFontSize(13); doc.text(title, 14, 36);
   doc.setFontSize(9); doc.setTextColor(90,90,90);
   doc.text('Generated: '+new Date().toLocaleString(), 14, 42);
@@ -209,8 +209,8 @@ function printReport(title, tableHTML){
     td{border-bottom:1px solid #ddd;padding:8px;font-size:12px}
     .head{border-bottom:3px solid #fdc22b;padding-bottom:8px;margin-bottom:16px}
     </style></head><body>
-    <div class="head"><h1>Naic OJT Attendance System</h1>
-    <div>Municipality of Naic, Cavite · ${new Date().toLocaleString()}</div></div>
+    <div class="head"><h1>Engineering Office Attendance System</h1>
+    <div>Municipal Engineering Office · ${new Date().toLocaleString()}</div></div>
     <h3>${title}</h3>${tableHTML}</body></html>`);
   w.document.close(); w.focus(); setTimeout(()=>w.print(),400);
 }
@@ -297,3 +297,22 @@ function escapeHtml(s){
   return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 function escapeAttr(s){ return escapeHtml(s); }
+
+
+/* Back-button logout guard: any back navigation from an authenticated page
+   pops the shared confirmDialog before actually leaving. */
+function installBackGuard(){
+  if(window.__BACK_GUARD__) return; window.__BACK_GUARD__ = true;
+  try { history.pushState({guard:1}, ''); } catch(_){}
+  window.addEventListener('popstate', async () => {
+    try { history.pushState({guard:1}, ''); } catch(_){}
+    if(typeof confirmDialog !== 'function'){ if(typeof logout==='function') logout({confirm:false}); return; }
+    const ok = await confirmDialog({
+      title:'Leave this page?',
+      message:'Going back will log you out of your account. Continue?',
+      confirmText:'Log Out', cancelText:'Stay', danger:true
+    });
+    if(ok && typeof logout==='function') logout({confirm:false});
+  });
+}
+document.addEventListener('DOMContentLoaded', () => { setTimeout(installBackGuard, 100); });
