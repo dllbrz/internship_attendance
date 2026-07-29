@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Profile — Intern · Naic OJT</title>
+<title>Profile — Intern · Engineering Office</title>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="../css/styles.css">
 </head>
@@ -215,78 +215,60 @@ async function removePic(){
   toast('Photo removed.','success'); render();
 }
 
-// ---------- PRINTABLE TIME CARD (PDF) ----------
+// ---------- PRINTABLE TIME CARD (compact vertical, half-Letter) ----------
 function generateTimeCard(){
   const u = ME; if(!u){ toast('Not ready','error'); return; }
   if(!window.jspdf || !window.jspdf.jsPDF){ toast('PDF library still loading. Try again.','error'); return; }
   const { jsPDF } = window.jspdf;
-  const doc = new jsPDF({ unit:'pt', format:'letter' });
+  const doc = new jsPDF({ unit:'pt', format:[396, 612] }); // 5.5 x 8.5 in
   const W = doc.internal.pageSize.getWidth();
+  const H = doc.internal.pageSize.getHeight();
 
-  // Header
-  doc.setFillColor(10,31,68); doc.rect(0,0,W,64,'F');
-  doc.setTextColor(253,194,43); doc.setFontSize(16); doc.text('OJT Intern Time Card', 40, 30);
-  doc.setTextColor(255,255,255); doc.setFontSize(10);
-  doc.text('Municipality of Naic, Cavite — Office of the Municipal Engineer', 40, 48);
+  doc.setFillColor(10,31,68); doc.rect(0,0,W,52,'F');
+  doc.setTextColor(253,194,43); doc.setFontSize(13); doc.text('OFFICIAL TIME CARD', 20, 22);
+  doc.setTextColor(255,255,255); doc.setFontSize(8.5);
+  doc.text('Municipal Engineering Office · OJT Program', 20, 38);
 
-  // Intern info block
-  doc.setTextColor(20,20,20); doc.setFontSize(11);
-  let y = 92;
-  const line = (label, value) => {
-    doc.setFont(undefined,'bold'); doc.text(label, 40, y);
-    doc.setFont(undefined,'normal'); doc.text(String(value||'—'), 170, y);
-    y += 16;
-  };
-  line('Intern Name:', u.name);
-  line('Intern ID:', u.id);
-  line('School:', u.school);
-  line('Course:', u.course);
-  line('OJT Adviser:', u.adviser_name);
-  line('Adviser Contact:', u.adviser_contact);
-  line('OJT Period:', `${fmtDate(u.start_date)}  —  ${fmtDate(u.end_date)}`);
-  line('Required Hours:', `${u.required_hours} hours`);
+  doc.setTextColor(20,20,20); doc.setFontSize(9);
+  let y = 72;
+  const row = (label,value)=>{ doc.setFont(undefined,'bold'); doc.text(label,20,y);
+    doc.setFont(undefined,'normal'); doc.text(String(value||'—'),120,y,{maxWidth:W-140}); y+=14; };
+  row('Intern Name:',u.name); row('Intern ID:',u.id); row('School:',u.school);
+  row('Course:',u.course); row('OJT Adviser:',u.adviser_name);
+  row('OJT Period:',`${fmtDate(u.start_date)} — ${fmtDate(u.end_date)}`);
+  row('Required Hours:',`${u.required_hours} hrs`);
 
-  // Summary
-  const list = studentAttendance(u.id).slice().reverse(); // chronological
+  const list = studentAttendance(u.id).slice().reverse();
   const rendered = totalHours(u.id);
   const present = list.filter(r=>r.status==='present').length;
   const late = list.filter(r=>r.status==='late').length;
   const absent = list.filter(r=>r.status==='absent').length;
 
-  y += 6;
-  doc.setDrawColor(210,215,225); doc.line(40, y, W-40, y); y += 14;
-  doc.setFont(undefined,'bold'); doc.text('Summary', 40, y); doc.setFont(undefined,'normal'); y += 14;
-  doc.text(`Hours Rendered: ${rendered} / ${u.required_hours}    Present: ${present}    Late: ${late}    Absent: ${absent}`, 40, y);
-  y += 12;
+  y+=4; doc.setDrawColor(210,215,225); doc.line(20,y,W-20,y); y+=12;
+  doc.setFont(undefined,'bold'); doc.text('SUMMARY',20,y); y+=12; doc.setFont(undefined,'normal');
+  doc.text(`Hours Rendered: ${rendered} / ${u.required_hours}`,20,y); y+=12;
+  doc.text(`Present: ${present}    Late: ${late}    Absent: ${absent}`,20,y);
 
-  const body = list.map(r => [ fmtDate(r.date), fmt12(r.time_in), fmt12(r.time_out), (r.hours||0).toString(), (r.status||'').toUpperCase() ]);
-  doc.autoTable({
-    startY: y + 6,
-    head: [['Date','Time In','Time Out','Hours','Status']],
-    body: body.length ? body : [['—','—','—','—','No records']],
-    theme:'grid',
-    headStyles:{ fillColor:[13,43,107], textColor:255, fontSize:10 },
-    styles:{ fontSize:9, cellPadding:5 },
-    alternateRowStyles:{ fillColor:[242,247,255] }
-  });
+  const body = list.map(r=>[fmtDate(r.date),fmt12(r.time_in)||'—',fmt12(r.time_out)||'—',
+    Number(r.hours||0).toFixed(2),(r.status||'').toUpperCase()]);
+  doc.autoTable({ startY:y+10, head:[['Date','In','Out','Hrs','Status']],
+    body: body.length?body:[['—','—','—','—','No records']], theme:'grid',
+    margin:{left:20,right:20},
+    headStyles:{fillColor:[13,43,107],textColor:255,fontSize:8,halign:'center'},
+    styles:{fontSize:7.5,cellPadding:3,halign:'center'},
+    columnStyles:{0:{halign:'left'}}, alternateRowStyles:{fillColor:[242,247,255]} });
 
-  // Signatures
-  const endY = doc.lastAutoTable.finalY + 40;
-  doc.setFontSize(10);
-  doc.line(60, endY, 240, endY);
-  doc.line(W-240, endY, W-60, endY);
-  doc.text('Intern Signature', 110, endY+14);
-  doc.text('OJT Adviser Signature', W-200, endY+14);
-
-  doc.setFontSize(8); doc.setTextColor(120,120,120);
-  doc.text('Generated on '+new Date().toLocaleString()+' — Naic OJT Attendance System', 40, doc.internal.pageSize.getHeight()-24);
-
-  const filename = `time-card-${u.id}.pdf`;
-  doc.save(filename);
-  toast('Time card generated.','success');
+  const sigY = Math.min(H-60, (doc.lastAutoTable?doc.lastAutoTable.finalY:y)+34);
+  doc.setFontSize(8); doc.setTextColor(20,20,20);
+  doc.line(30,sigY,170,sigY); doc.line(W-170,sigY,W-30,sigY);
+  doc.text('Intern Signature',65,sigY+12); doc.text('Adviser Signature',W-140,sigY+12);
+  doc.setFontSize(7); doc.setTextColor(120,120,120);
+  doc.text('Generated '+new Date().toLocaleString()+' · Engineering Office',20,H-16);
+  doc.save(`time-card-${u.id}.pdf`); toast('Time card generated.','success');
 }
 
 render();
+subscribeRealtime(() => render());
 </script>
 </body>
 </html>
