@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Dashboard — Admin · Naic OJT</title>
+<title>Dashboard — Admin · Engineering Office</title>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="../css/styles.css">
 </head>
@@ -41,12 +41,6 @@ if(admin){
         <div class="stat-card red"><div><div class="stat-label">Absent Today</div><div class="stat-value">${absent}</div></div><div class="stat-icon">${STAT_ICONS.absent}</div></div>
       </div>
 
-      <div class="card-grid-2">
-        <div class="card"><div class="card-head"><div><div class="card-title">Attendance Trend</div><div class="card-subtitle">Last 7 days</div></div></div>
-        <canvas id="trend" height="90"></canvas></div>
-        <div class="card"><div class="card-head"><div><div class="card-title">Today's Status</div><div class="card-subtitle">${activeStudents.length} total interns</div></div></div>
-        <canvas id="donut" height="90"></canvas></div>
-      </div>
 
       <div class="card"><div class="card-head"><div><div class="card-title">Attendance Progress</div><div class="card-subtitle">Toward each intern's required hours</div></div>
       <div class="text-sm text-muted">Total hours rendered (all): <strong style="color:var(--blue-800)">${totalHrs}</strong></div></div>
@@ -55,11 +49,6 @@ if(admin){
       </div>
     </main>`;
   startClock('#clockBox');
-  new Chart(document.getElementById('trend'),{type:'line',data:{labels:days.map(d=>d.slice(5)),datasets:[
-    {label:'Present',data:presentSeries,borderColor:'#22c55e',backgroundColor:'rgba(34,197,94,.15)',tension:.3,fill:true},
-    {label:'Late',data:lateSeries,borderColor:'#fdc22b',backgroundColor:'rgba(253,194,43,.15)',tension:.3,fill:true}
-  ]},options:{responsive:true,plugins:{legend:{position:'bottom'}}}});
-  new Chart(document.getElementById('donut'),{type:'doughnut',data:{labels:['Present','Late','Absent'],datasets:[{data:[present,late,absent],backgroundColor:['#22c55e','#fdc22b','#ef4444']}]},options:{plugins:{legend:{position:'bottom'}}}});
 }
 })();
 </script>
