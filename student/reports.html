@@ -62,5 +62,6 @@ async function csv(){ const u=await requireStudent(); const rows=[['Date','Time 
 async function pdf(){ const u=await requireStudent(); const rows=studentAttendance(u.id).map(r=>[fmtDate(r.date),fmt12(r.time_in),fmt12(r.time_out),r.hours||'—',r.status.toUpperCase()]); exportPDF('report-'+u.id+'.pdf','Personal Attendance Report — '+u.name,['Date','Time In','Time Out','Hours','Status'],rows);}
 async function prn(){ printReport('Attendance Report — '+(await requireStudent()).name, document.getElementById('tbl').outerHTML);}
 render();
+  subscribeRealtime(() => render());
 </script>
 </body></html>
