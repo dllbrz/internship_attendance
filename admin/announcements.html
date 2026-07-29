@@ -115,5 +115,6 @@ async function del(id){
   toast('Deleted.','success'); render();
 }
 render();
+  subscribeRealtime(() => render());
 </script>
 </body></html>
