@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Scanner — Admin · Naic OJT</title>
+<title>Scanner — Admin · Engineering Office</title>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="../css/styles.css">
 </head>
@@ -61,30 +61,6 @@ async function render(){
     <main class="main">
       ${renderTopbar('QR Scanner & Schedule', 'First scan of the day records Time In, the second records Time Out. Status follows the office schedule below.')}
 
-      <div class="card">
-        <div class="card-title" style="margin-bottom:8px">Global Office / Shift Schedule</div>
-        <p class="text-sm text-muted" style="margin:0 0 12px">
-          Saved once and enforced for every intern on every device. Interns with their own
-          shift (set on the Students page) keep their custom times.
-        </p>
-        <div class="scanner-settings">
-          <div class="form-group"><label for="s_start">Shift Time In</label>
-            <input type="time" class="form-control" id="s_start" value="${sch.start_time}"></div>
-          <div class="form-group"><label for="s_end">Shift Time Out</label>
-            <input type="time" class="form-control" id="s_end" value="${sch.end_time || '17:00'}"></div>
-          <div class="form-group"><label for="s_grace">Grace (min) — on time until</label>
-            <input type="number" class="form-control" id="s_grace" min="0" max="120" value="${sch.grace_minutes}"></div>
-          <div class="form-group"><label for="s_absent">Absent after (min)</label>
-            <input type="number" class="form-control" id="s_absent" min="15" max="480" value="${sch.absent_after_minutes}"></div>
-          <div class="form-group"><label for="s_break">Break (min)</label>
-            <input type="number" class="form-control" id="s_break" min="0" max="180" step="15" value="${sch.break_minutes == null ? 60 : sch.break_minutes}"></div>
-          <button class="btn btn-primary" id="saveSchedBtn" onclick="saveSchedule()">Save Schedule</button>
-        </div>
-        <p class="text-sm text-muted" style="margin:10px 0 0">
-          <strong>On time</strong>: scanned before start + grace. <strong>Late</strong>: after grace.
-          <strong>Absent</strong>: no scan by start + “Absent after”, or past the shift end.
-        </p>
-      </div>
 
       <div class="card">
         <div class="card-title" style="margin-bottom:4px">Assign Schedule to Interns</div>
@@ -116,8 +92,7 @@ async function render(){
         </div>
       </div>
 
-      <div class="card-grid-2">
-        <div class="card">
+      <div class="card">
           <div class="card-title">Camera</div>
           <div id="permBanner" class="camera-msg" role="status" aria-live="polite" style="display:none;background:#fff8e1;color:#8a6d0f;border:1px solid #f2d97a;padding:10px 12px;border-radius:8px;margin-bottom:10px"></div>
           <div id="reader" style="width:100%;max-width:420px;margin:0 auto"></div>
@@ -133,21 +108,7 @@ async function render(){
             <button class="btn btn-primary" onclick="scanManual()">Scan</button>
           </div>
         </div>
-        <div class="card">
-          <div class="card-title">Today's Scans</div>
-          <p class="text-sm text-muted" style="margin:0 0 8px">1st scan = Time In · 2nd scan = Time Out.</p>
-          <div class="table-wrap">
-            <table class="table">
-              <thead><tr>
-                <th scope="col">Intern ID</th><th scope="col">Name</th>
-                <th scope="col">Time In</th><th scope="col">Time Out</th>
-                <th scope="col">Status</th>
-              </tr></thead>
-              <tbody id="log"></tbody>
-            </table>
-          </div>
         </div>
-      </div>
     </main>`;
   startClock('#clockBox');
   drawSchedList('');
@@ -405,6 +366,7 @@ function drawLog(){
 }
 
 render();
+subscribeRealtime(() => render());
 window.addEventListener('beforeunload', stopCamera);
 </script>
 </body>
