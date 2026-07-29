@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Account Settings — Admin · Naic OJT</title>
+<title>Account Settings — Admin · Engineering Office</title>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="../css/styles.css">
 </head>
@@ -97,59 +97,9 @@ async function render(){
         </div>
         <div class="table-wrap" id="adminTable"><div class="text-muted p-4">Loading…</div></div>
       </div>
-
-      <!-- Intern account management -->
-      <div class="card">
-        <div class="card-head">
-          <div><div class="card-title">Intern Accounts</div>
-          <div class="card-subtitle">Edit intern profile details. Changes save immediately.</div></div>
-          <input class="form-control" id="internSearch" placeholder="Search name or ID…" style="max-width:260px" oninput="drawInterns(this.value)">
-        </div>
-        <div class="table-wrap"><table class="table">
-          <thead><tr><th>ID</th><th>Name</th><th>School</th><th>Course</th><th>Status</th><th style="text-align:right">Action</th></tr></thead>
-          <tbody id="internRows"></tbody>
-        </table></div>
-      </div>
-    </main>
-
-    <!-- Edit intern modal -->
-    <div class="modal" id="internModal">
-      <div class="modal-inner" style="max-width:640px">
-        <div class="modal-head"><h3>Edit Intern Account</h3><button class="close-x" onclick="closeModal('internModal')">×</button></div>
-        <div class="modal-body">
-          <div id="i_name" style="font-weight:700;color:var(--blue-900);margin-bottom:10px"></div>
-          <div class="form-row">
-            <div class="form-group"><label>Full Name</label><input class="form-control" id="i_full"></div>
-            <div class="form-group"><label>Phone</label><input class="form-control" id="i_phone"></div>
-          </div>
-          <div class="form-row">
-            <div class="form-group"><label>School</label><input class="form-control" id="i_school"></div>
-            <div class="form-group"><label>Course</label><input class="form-control" id="i_course"></div>
-          </div>
-          <div class="form-group"><label>Address</label><textarea class="form-control" id="i_addr" rows="2"></textarea></div>
-          <div class="form-row">
-            <div class="form-group"><label>Adviser Name</label><input class="form-control" id="i_adv"></div>
-            <div class="form-group"><label>Adviser Contact</label><input class="form-control" id="i_advc"></div>
-          </div>
-          <div class="form-row">
-            <div class="form-group"><label>Start Date</label><input type="date" class="form-control" id="i_start"></div>
-            <div class="form-group"><label>End Date</label><input type="date" class="form-control" id="i_end"></div>
-          </div>
-          <div class="form-row">
-            <div class="form-group"><label>Required Hours</label><input type="number" class="form-control" id="i_hours" min="1"></div>
-            <div class="form-group"><label>Expected Time In</label><input type="time" class="form-control" id="i_tin"></div>
-          </div>
-          <div class="form-error" id="i_err"></div>
-        </div>
-        <div class="modal-foot">
-          <button class="btn btn-outline" onclick="closeModal('internModal')">Cancel</button>
-          <button class="btn btn-primary" onclick="saveIntern()">Save Changes</button>
-        </div>
-      </div>
-    </div>`;
+    </main>`;
   startClock('#clockBox');
   toggleAdminMode();
-  drawInterns('');
   await loadAdmins();
 }
 
@@ -171,19 +121,6 @@ async function loadAdmins(){
       </tr>`).join('')}</tbody></table>`;
 }
 
-function drawInterns(q){
-  const search = (q||'').toLowerCase().trim();
-  const list = getDB().students.filter(s => !search || s.id.toLowerCase().includes(search) || (s.name||'').toLowerCase().includes(search));
-  document.getElementById('internRows').innerHTML = list.length ? list.map(s=>`
-    <tr>
-      <td style="font-weight:700;color:var(--blue-800)">${s.id}</td>
-      <td><div class="cell-name">${profileIconHTML(s,28)}<span class="name-text">${escapeHtml(s.name||'')}</span></div></td>
-      <td>${escapeHtml(s.school||'—')}</td>
-      <td>${escapeHtml(s.course||'—')}</td>
-      <td>${s.active===false?'<span class="pill gray">Archived</span>':'<span class="pill green">Active</span>'}</td>
-      <td style="text-align:right"><button class="btn btn-outline btn-sm" onclick="openIntern('${s.id}')">Edit</button></td>
-    </tr>`).join('') : '<tr><td colspan="6" class="text-center text-muted" style="padding:16px">No interns found.</td></tr>';
-}
 
 function openIntern(id){
   const s = getDB().students.find(x=>x.id===id); if(!s) return;
@@ -204,25 +141,6 @@ function openIntern(id){
   openModal('internModal');
 }
 
-async function saveIntern(){
-  const patch = {
-    full_name: document.getElementById('i_full').value.trim(),
-    phone: document.getElementById('i_phone').value.trim(),
-    school: document.getElementById('i_school').value.trim(),
-    course: document.getElementById('i_course').value.trim(),
-    address: document.getElementById('i_addr').value.trim(),
-    adviser_name: document.getElementById('i_adv').value.trim(),
-    adviser_contact: document.getElementById('i_advc').value.trim(),
-    start_date: document.getElementById('i_start').value,
-    end_date: document.getElementById('i_end').value,
-    required_hours: +document.getElementById('i_hours').value,
-    expected_time_in: document.getElementById('i_tin').value || '08:00'
-  };
-  const r = await updateStudent(EDIT_INTERN_ID, patch);
-  if(!r.ok){ document.getElementById('i_err').textContent = r.error; return; }
-  closeModal('internModal'); toast('Intern updated.','success');
-  drawInterns(document.getElementById('internSearch').value);
-}
 
 async function chPass(e){
   e.preventDefault();
@@ -317,6 +235,7 @@ async function admDelPic(){
 }
 
 render();
+subscribeRealtime(() => render());
 </script>
 </body>
 </html>
