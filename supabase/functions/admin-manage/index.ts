@@ -6,6 +6,7 @@
 // Actions (POST JSON body):
 //   { action: "list" }
 //   { action: "create", email, password, full_name }
+//   { action: "invite", email, full_name, redirect_to }
 //   { action: "delete", user_id }
 //
 // Caller must send Authorization: Bearer <access_token> of a signed-in admin.
@@ -149,6 +150,31 @@ Deno.serve(async (req) => {
         return json({ error: roleInsErr.message }, 500);
       }
       return json({ ok: true, user_id: newId });
+    }
+
+    // Email an invitation link instead of setting a password manually.
+    if (action === "invite") {
+      const email = String(body.email || "").trim().toLowerCase();
+      const full_name = String(body.full_name || "").trim();
+      const redirectTo = String(body.redirect_to || "");
+      if (!email || !email.includes("@")) {
+        return json({ error: "A valid email address is required." }, 400);
+      }
+
+      const { data: invited, error: inviteErr } =
+        await admin.auth.admin.inviteUserByEmail(email, {
+          data: { full_name, invited_as: "admin" },
+          redirectTo: redirectTo || undefined,
+        });
+      if (inviteErr) return json({ error: inviteErr.message }, 400);
+      const newId = invited.user!.id;
+
+      const { error: roleInsErr } = await admin
+        .from("user_roles")
+        .upsert({ user_id: newId, role: "admin" }, { onConflict: "user_id,role" });
+      if (roleInsErr) return json({ error: roleInsErr.message }, 500);
+
+      return json({ ok: true, user_id: newId, invited: true });
     }
 
     if (action === "delete") {
