@@ -7,6 +7,7 @@
 //   { action: "list" }
 //   { action: "create", email, password, full_name }
 //   { action: "invite", email, full_name, redirect_to }
+//   { action: "send_credentials", full_name }
 //   { action: "delete", user_id }
 //
 // Caller must send Authorization: Bearer <access_token> of a signed-in admin.
@@ -199,9 +200,10 @@ Deno.serve(async (req) => {
     // Requires a RESEND_API_KEY secret; if it is not set this is a no-op so
     // the setup flow never breaks.
     if (action === "setup_complete") {
-      const email = userRes.user.email || "";
+      const { data: meRes } = await admin.auth.getUser(jwt);
+      const email = meRes?.user?.email || "";
       const name =
-        (userRes.user.user_metadata?.full_name as string) ||
+        (meRes?.user?.user_metadata?.full_name as string) ||
         (email || "").split("@")[0];
       const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY");
       const FROM = Deno.env.get("ADMIN_MAIL_FROM") ||
@@ -242,6 +244,77 @@ Deno.serve(async (req) => {
         return json({ ok: true, emailed: false, reason: await res.text() });
       }
       return json({ ok: true, emailed: true });
+    }
+
+    // Invited admin clicked "Accept invitation": generate a password for the
+    // account, set it, and email the credentials to the invited address.
+    if (action === "send_credentials") {
+      const { data: me } = await admin.auth.getUser(jwt);
+      const email = me?.user?.email || "";
+      const full_name = String(body.full_name || "").trim() ||
+        (me?.user?.user_metadata?.full_name as string) ||
+        (email || "").split("@")[0];
+      if (!email) return json({ error: "No email on this account." }, 400);
+
+      // Strong random password (16 chars, mixed classes).
+      const chars =
+        "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%";
+      const bytes = new Uint8Array(16);
+      crypto.getRandomValues(bytes);
+      const password = Array.from(bytes, (b) => chars[b % chars.length]).join("");
+
+      const { error: updErr } = await admin.auth.admin.updateUserById(callerId, {
+        password,
+        user_metadata: { ...(me?.user?.user_metadata || {}), full_name },
+      });
+      if (updErr) return json({ error: updErr.message }, 400);
+
+      const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY");
+      const FROM = Deno.env.get("ADMIN_MAIL_FROM") ||
+        "Engineering Office <onboarding@resend.dev>";
+      const LOGIN_URL = Deno.env.get("ADMIN_LOGIN_URL") || "";
+      if (!RESEND_API_KEY) {
+        // Mailer not configured — return the password so the page can show it.
+        return json({ ok: true, emailed: false, password, reason: "mailer_not_configured" });
+      }
+
+      const html = `
+        <div style="font-family:Poppins,Arial,sans-serif;background:#f5f7fb;padding:28px">
+          <div style="max-width:560px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;border:1px solid #e6e9f0">
+            <div style="background:#12305c;color:#fff;padding:20px 24px">
+              <div style="font-size:13px;letter-spacing:.08em;opacity:.8">ENGINEERING OFFICE</div>
+              <div style="font-size:20px;font-weight:700">Your admin login details</div>
+            </div>
+            <div style="padding:24px;color:#1f2937;font-size:15px;line-height:1.6">
+              <p>Hi ${full_name},</p>
+              <p>Your administrator account for the <strong>OJT Attendance &amp; Internship Monitoring System</strong> is now active. Use these credentials to sign in:</p>
+              <table style="border-collapse:collapse;margin:16px 0">
+                <tr><td style="padding:6px 14px 6px 0;color:#6b7280">Email</td><td style="font-weight:700">${email}</td></tr>
+                <tr><td style="padding:6px 14px 6px 0;color:#6b7280">Password</td><td style="font-weight:700;font-family:monospace;font-size:16px">${password}</td></tr>
+              </table>
+              ${LOGIN_URL ? `<p style="margin:24px 0"><a href="${LOGIN_URL}" style="background:#12305c;color:#fff;text-decoration:none;padding:12px 22px;border-radius:8px;display:inline-block;font-weight:600">Go to Admin Login</a></p>` : ""}
+              <p style="color:#b45309;font-size:13px"><strong>Please change this password</strong> after your first sign-in (Account &rarr; Change Password).</p>
+              <p style="color:#6b7280;font-size:13px">If you did not expect this email, contact the Engineering Office immediately.</p>
+            </div>
+          </div>
+        </div>`;
+      const res = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${RESEND_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          from: FROM,
+          to: [email],
+          subject: "Your Engineering Office admin login details",
+          html,
+        }),
+      });
+      if (!res.ok) {
+        return json({ ok: true, emailed: false, password, reason: await res.text() });
+      }
+      return json({ ok: true, emailed: true, email });
     }
 
     if (action === "delete") {
