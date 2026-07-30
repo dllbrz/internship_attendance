@@ -668,28 +668,50 @@ async function exportDB(){
 }
 
 // ---------- ADMIN MANAGEMENT (calls the admin-manage edge function) ----------
-async function adminManage(action, payload){
+async function freshAccessToken(){
+  // getSession() can hand back a token that is already expired (or about to
+  // expire) which makes the edge function answer "Invalid session".
+  // Refresh proactively whenever the token has <60s of life left.
+  let { data:{ session } } = await sb.auth.getSession();
+  if(!session) return null;
+  const exp = (session.expires_at || 0) * 1000;
+  if(!exp || exp - Date.now() < 60000){
+    const { data, error } = await sb.auth.refreshSession();
+    if(!error && data?.session) session = data.session;
+  }
+  return session?.access_token || null;
+}
+
+async function adminManage(action, payload, _retried){
   try {
-    const { data: { session } } = await sb.auth.getSession();
-    if(!session) return { ok:false, error:'Your session expired. Please sign in again.' };
+    const token = await freshAccessToken();
+    if(!token) return { ok:false, error:'Your session expired. Please sign in again.' };
+
+    // Send the bearer token explicitly — relying on the implicit session header
+    // is what breaks after a token refresh in some supabase-js builds.
     const { data, error } = await sb.functions.invoke('admin-manage', {
-      body: { action, ...(payload||{}) }
+      body: { action, ...(payload||{}) },
+      headers: { Authorization: 'Bearer ' + token }
     });
+
     if(error){
-      // supabase-js wraps non-2xx responses in FunctionsHttpError; try to read the body
       let msg = error.message || 'Request failed';
-      // FunctionsFetchError = the edge function could not be reached at all
-      // (not deployed / offline). Give an actionable message instead of the
-      // opaque "Failed to send a request to the Edge Function".
       if(/failed to send a request|fetch/i.test(msg)){
         return { ok:false, error:'Admin management service is unavailable. Deploy the "admin-manage" edge function, then try again.' };
       }
+      let status = error.context?.status;
       try {
         if(error.context && typeof error.context.json === 'function'){
           const j = await error.context.json();
           if(j && j.error) msg = j.error;
         }
       } catch(_){}
+      // One automatic retry with a hard-refreshed token.
+      if(!_retried && (status === 401 || /invalid session|jwt|token/i.test(msg))){
+        const r = await sb.auth.refreshSession();
+        if(r?.data?.session) return adminManage(action, payload, true);
+        return { ok:false, error:'Your session expired. Please sign in again.' };
+      }
       return { ok:false, error: msg };
     }
     if(data && data.error) return { ok:false, error:data.error };
