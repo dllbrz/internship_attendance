@@ -892,7 +892,8 @@ async function deleteOwnAvatar(){
 async function updateAdminSelf(patch){
   const upd = {};
   if(patch.full_name != null) upd.full_name = String(patch.full_name).trim();
-  if(patch.avatar_url != null) upd.avatar_url = patch.avatar_url;
+  // NOTE: use `in` so that an explicit null (delete photo) is applied.
+  if('avatar_url' in patch) upd.avatar_url = patch.avatar_url;
   const { data, error } = await sb.auth.updateUser({ data: upd });
   if(error) return {ok:false, error:error.message};
   const cu = window.__DB__.currentUser;
@@ -924,8 +925,23 @@ async function uploadAdminAvatar(file){
 }
 
 async function deleteAdminAvatar(){
+  // 1) Delete the stored file(s) so the photo is gone for good.
+  try{
+    const { data:{user} } = await sb.auth.getUser();
+    if(user){
+      const exts = ['png','jpg','jpeg','webp','gif'];
+      const paths = exts.map(x=>`${user.id}/admin-avatar.${x}`)
+                        .concat(exts.map(x=>`${user.id}/avatar.${x}`));
+      await sb.storage.from('avatars').remove(paths);
+    }
+  }catch(_){ /* ignore storage errors — metadata clearing below is what matters */ }
+
+  // 2) Clear the reference on the auth user metadata.
   const r = await updateAdminSelf({ avatar_url:null });
-  return r;
+  if(!r.ok) return r;
+  const cu = window.__DB__.currentUser;
+  if(cu){ cu.avatar = null; cu.avatar_url = null; }
+  return { ok:true };
 }
 
 // ============================================================================
@@ -1090,4 +1106,11 @@ async function inviteAdmin(email, fullName){
 // password. Sends the "your admin account is ready" confirmation email.
 async function notifyAdminSetupComplete(){
   return adminManage('setup_complete', {});
+}
+
+// Called by admin-setup-password.html the moment an invited admin opens the
+// "Accept invitation" link. The Edge Function generates a password for the
+// account and emails it to the invited address.
+async function sendAdminCredentials(fullName){
+  return adminManage('send_credentials', { full_name:(fullName||'').trim() });
 }
