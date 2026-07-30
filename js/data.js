@@ -477,7 +477,7 @@ async function timeOut(studentId){
   const [h1,m1]=rec.time_in.split(':').map(Number);
   const [h2,m2]=t.split(':').map(Number);
   const brk = breakMinutesFor(st);
-  const hours = +Math.max(0, (h2*60+m2-(h1*60+m1))/60).toFixed(2);
+  const hours = +Math.max(0, (h2*60+m2-(h1*60+m1) - brk)/60).toFixed(2);
   const { data, error } = await sb.from('attendance').update({ time_out:t, hours }).eq('id', rec.id).select().single();
   if(error) return {ok:false, error:error.message};
   rec.time_out = t; rec.hours = hours;
@@ -942,7 +942,7 @@ async function updateAttendanceRecord(recordId, patch){
   if(upd.time_in && upd.time_out){
     const rec = window.__DB__.attendance.find(a=>a.id===recordId);
     const st  = rec ? window.__DB__.students.find(s=>s.id===rec.student_id) : null;
-    const mins = minutesOf(upd.time_out) - minutesOf(upd.time_in);
+    const mins = minutesOf(upd.time_out) - minutesOf(upd.time_in) - breakMinutesFor(st);
     upd.hours = +Math.max(0, mins/60).toFixed(2);
   } else if('time_out' in patch && !upd.time_out){
     upd.hours = 0;
@@ -1013,7 +1013,7 @@ async function scanAttendance(studentId){
   // Second scan → Time Out
   if(rec && rec.time_in){
     if(rec.time_out) return { ok:true, already:true, kind:'out', time:rec.time_out, status:rec.status };
-    const mins = minutesOf(t) - minutesOf(rec.time_in);
+    const mins = minutesOf(t) - minutesOf(rec.time_in) - breakMinutesFor(s);
     const hours = +Math.max(0, mins/60).toFixed(2);
     const { data, error } = await sb.from('attendance')
       .update({ time_out:t, hours }).eq('id', rec.id).select().single();
@@ -1059,19 +1059,13 @@ async function applyScheduleToStudents(internIds, schedule){
 // ============================================================================
 async function inviteAdmin(email, fullName){
   if(!email || !email.includes('@')) return { ok:false, error:'Enter a valid email address.' };
-  const redirect = authUrl('login-admin.html');
+  // Invited admins land on the dedicated "Set Your Password" portal.
+  const redirect = authUrl('admin-setup-password.html');
   return adminManage('invite', { email:email.trim().toLowerCase(), full_name:(fullName||'').trim(), redirect_to: redirect });
 }
 
-
-/* Realtime sync — call from any page after bootstrap to auto-refresh __DB__ */
-function subscribeRealtime(onChange){
-  if(!window.sb || window.__RT_SUB__) return;
-  const bump = async () => { try { await bootstrap(true); } catch(e){} if(typeof onChange==='function') onChange(); };
-  const chan = sb.channel('rt-attendance')
-    .on('postgres_changes',{event:'*',schema:'public',table:'attendance'}, bump)
-    .on('postgres_changes',{event:'*',schema:'public',table:'students'}, bump)
-    .on('postgres_changes',{event:'*',schema:'public',table:'announcements'}, bump)
-    .subscribe();
-  window.__RT_SUB__ = chan;
+// Called by admin-setup-password.html right after the invited admin saves a
+// password. Sends the "your admin account is ready" confirmation email.
+async function notifyAdminSetupComplete(){
+  return adminManage('setup_complete', {});
 }
