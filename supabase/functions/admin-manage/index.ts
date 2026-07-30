@@ -177,6 +177,56 @@ Deno.serve(async (req) => {
       return json({ ok: true, user_id: newId, invited: true });
     }
 
+    // Send the "your admin account is ready" confirmation email. Called by
+    // admin-setup-password.html right after an invited admin sets a password.
+    // Requires a RESEND_API_KEY secret; if it is not set this is a no-op so
+    // the setup flow never breaks.
+    if (action === "setup_complete") {
+      const email = userRes.user.email || "";
+      const name =
+        (userRes.user.user_metadata?.full_name as string) ||
+        (email || "").split("@")[0];
+      const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY");
+      const FROM = Deno.env.get("ADMIN_MAIL_FROM") ||
+        "Engineering Office <onboarding@resend.dev>";
+      const LOGIN_URL = Deno.env.get("ADMIN_LOGIN_URL") || "";
+      if (!RESEND_API_KEY || !email) {
+        return json({ ok: true, emailed: false, reason: "mailer_not_configured" });
+      }
+      const html = `
+        <div style="font-family:Poppins,Arial,sans-serif;background:#f5f7fb;padding:28px">
+          <div style="max-width:560px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;border:1px solid #e6e9f0">
+            <div style="background:#12305c;color:#fff;padding:20px 24px">
+              <div style="font-size:13px;letter-spacing:.08em;opacity:.8">ENGINEERING OFFICE</div>
+              <div style="font-size:20px;font-weight:700">Admin account activated</div>
+            </div>
+            <div style="padding:24px;color:#1f2937;font-size:15px;line-height:1.6">
+              <p>Hi ${name},</p>
+              <p>Your administrator account for the <strong>OJT Attendance &amp; Internship Monitoring System</strong> has been set up successfully. You can now sign in with <strong>${email}</strong> and the password you just created.</p>
+              ${LOGIN_URL ? `<p style="margin:24px 0"><a href="${LOGIN_URL}" style="background:#12305c;color:#fff;text-decoration:none;padding:12px 22px;border-radius:8px;display:inline-block;font-weight:600">Go to Admin Login</a></p>` : ""}
+              <p style="color:#6b7280;font-size:13px">If you did not set this up, contact the Engineering Office immediately.</p>
+            </div>
+          </div>
+        </div>`;
+      const res = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${RESEND_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          from: FROM,
+          to: [email],
+          subject: "Your Engineering Office admin account is ready",
+          html,
+        }),
+      });
+      if (!res.ok) {
+        return json({ ok: true, emailed: false, reason: await res.text() });
+      }
+      return json({ ok: true, emailed: true });
+    }
+
     if (action === "delete") {
       const target = String(body.user_id || "");
       if (!target) return json({ error: "user_id required" }, 400);
