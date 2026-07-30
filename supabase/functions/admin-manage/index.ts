@@ -37,22 +37,39 @@ Deno.serve(async (req) => {
   const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const ANON = Deno.env.get("SUPABASE_ANON_KEY")!;
 
-  const authHeader = req.headers.get("Authorization") || "";
-  const jwt = authHeader.replace(/^Bearer\s+/i, "");
-  if (!jwt) return json({ error: "Missing bearer token" }, 401);
-
-  // Identify caller
-  const anon = createClient(SUPABASE_URL, ANON, {
-    global: { headers: { Authorization: `Bearer ${jwt}` } },
-    auth: { persistSession: false },
-  });
-  const { data: userRes, error: userErr } = await anon.auth.getUser(jwt);
-  if (userErr || !userRes?.user) return json({ error: "Invalid session" }, 401);
-  const callerId = userRes.user.id;
+  const authHeader = req.headers.get("Authorization") ||
+    req.headers.get("authorization") || "";
+  const jwt = authHeader.replace(/^Bearer\s+/i, "").trim();
+  if (!jwt || jwt === ANON) return json({ error: "Missing bearer token" }, 401);
 
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
+
+  // Identify caller. Validate with the service-role client first: it does not
+  // depend on SUPABASE_ANON_KEY being present in the function env (newer
+  // projects ship publishable keys instead), which is a common cause of a
+  // spurious "Invalid session".
+  let callerId = "";
+  {
+    const { data: userRes, error: userErr } = await admin.auth.getUser(jwt);
+    if (!userErr && userRes?.user) {
+      callerId = userRes.user.id;
+    } else if (ANON) {
+      const anon = createClient(SUPABASE_URL, ANON, {
+        global: { headers: { Authorization: `Bearer ${jwt}` } },
+        auth: { persistSession: false },
+      });
+      const alt = await anon.auth.getUser(jwt);
+      if (alt.data?.user) callerId = alt.data.user.id;
+    }
+    if (!callerId) {
+      return json(
+        { error: "Invalid session — please sign out and sign in again." },
+        401,
+      );
+    }
+  }
 
   // Verify caller is admin
   const { data: roles, error: roleErr } = await admin
