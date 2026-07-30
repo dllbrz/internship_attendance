@@ -76,8 +76,6 @@ async function render(){
             <input type="time" class="form-control" id="a_tin" value="${sch.start_time}"></div>
           <div class="form-group"><label for="a_tout">Time Out</label>
             <input type="time" class="form-control" id="a_tout" value="${sch.end_time || '17:00'}"></div>
-          <div class="form-group"><label for="a_break">Break (min)</label>
-            <input type="number" class="form-control" id="a_break" min="0" max="180" step="15" value="${sch.break_minutes == null ? 60 : sch.break_minutes}"></div>
         </div>
         <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:6px 0 10px">
           <label class="sr-only" for="schSearch">Search interns</label>
@@ -188,7 +186,9 @@ async function applySchedule(){
   const ed = document.getElementById('a_edate').value;
   const tin = document.getElementById('a_tin').value;
   const tout = document.getElementById('a_tout').value;
-  const brk = +document.getElementById('a_break').value || 0;
+  // Break duration is inherited from the office schedule (no per-apply input).
+  const _os = getOfficeSchedule() || {};
+  const brk = (_os.break_minutes == null ? 60 : +_os.break_minutes);
 
   if(!tin || !tout){ toast('Time in and time out are required.','error'); return; }
   if(tout <= tin){ toast('Time out must be later than time in.','error'); return; }
@@ -196,7 +196,7 @@ async function applySchedule(){
 
   const ok = await confirmDialog({
     title:'Apply schedule',
-    message:`Apply ${fmt12(tin)} – ${fmt12(tout)} with a ${brk}-minute break to ${ids.length} intern(s)?`,
+    message:`Apply ${fmt12(tin)} – ${fmt12(tout)} with the standard ${brk}-minute break to ${ids.length} intern(s)?`,
     confirmText:'Apply'
   });
   if(!ok) return;
