@@ -299,20 +299,48 @@ function escapeHtml(s){
 function escapeAttr(s){ return escapeHtml(s); }
 
 
-/* Back-button logout guard: any back navigation from an authenticated page
-   pops the shared confirmDialog before actually leaving. */
+/* Back-button logout guard: only runs on authenticated pages (/admin/, /student/).
+   Public pages (landing, login, signup) navigate normally. In-page anchor
+   links (#features, #about, ...) are hash-only navigations and never trigger
+   the logout prompt. */
+function isAuthenticatedPage(){
+  const p = location.pathname.toLowerCase();
+  if(/\/(admin|student)\//.test(p)) {
+    return !/admin-setup-password|login|signup|forgot-password|reset-password/.test(p);
+  }
+  return false;
+}
 function installBackGuard(){
-  if(window.__BACK_GUARD__) return; window.__BACK_GUARD__ = true;
+  if(window.__BACK_GUARD__) return;
+  if(!isAuthenticatedPage()) return;      // landing/login pages: no guard at all
+  window.__BACK_GUARD__ = true;
+
+  let lastHash = location.hash;
+  let busy = false;
   try { history.pushState({guard:1}, ''); } catch(_){}
+
   window.addEventListener('popstate', async () => {
+    // Hash-only navigation (anchor links / scroll-spy): let it through.
+    if(location.hash !== lastHash){ lastHash = location.hash; return; }
+    if(busy) return;
+    busy = true;
     try { history.pushState({guard:1}, ''); } catch(_){}
-    if(typeof confirmDialog !== 'function'){ if(typeof logout==='function') logout({confirm:false}); return; }
+    if(typeof confirmDialog !== 'function'){
+      busy = false;
+      if(typeof logout==='function') logout({confirm:false});
+      return;
+    }
     const ok = await confirmDialog({
       title:'Leave this page?',
       message:'Going back will log you out of your account. Continue?',
       confirmText:'Log Out', cancelText:'Stay', danger:true
     });
+    busy = false;
     if(ok && typeof logout==='function') logout({confirm:false});
   });
+
+  // Keep the tracked hash in sync so anchor clicks are never mistaken for a
+  // back navigation away from the page.
+  window.addEventListener('hashchange', () => { lastHash = location.hash; });
 }
 document.addEventListener('DOMContentLoaded', () => { setTimeout(installBackGuard, 100); });
