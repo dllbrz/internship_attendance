@@ -12,7 +12,6 @@
 <script src="../js/supabase-config.js"></script>
 <script src="../js/data.js"></script>
 <script src="../js/app.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
 (async()=>{
 const admin = await requireAdmin();
@@ -26,10 +25,6 @@ if(admin){
   const absent = activeStudents.length - todayRecs.length;
   const totalHrs = +db.attendance.reduce((s,a)=>s+(a.hours||0),0).toFixed(2);
 
-  // last 7 days
-  const days=[]; for(let i=6;i>=0;i--){const d=new Date();d.setDate(d.getDate()-i);days.push(d.toISOString().slice(0,10));}
-  const presentSeries=days.map(d=>db.attendance.filter(a=>a.date===d && a.status==='present').length);
-  const lateSeries=days.map(d=>db.attendance.filter(a=>a.date===d && a.status==='late').length);
 
   document.getElementById('shell').innerHTML = renderSidebar('admin','dashboard') + `
     <main class="main">
