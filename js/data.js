@@ -279,6 +279,18 @@ async function autoMarkAbsent(){
       toInsert.push({ student_id:s.auth_id, date:today, status:'absent', hours:0, verified:false });
     }
   }
+  // Timed in but never timed out by the end of their shift -> Absent
+  if(window.__DB__.isAdmin){
+    for(const s of window.__DB__.students){
+      const rec = window.__DB__.attendance.find(a=>a.student_id===s.id && a.date===today);
+      if(!rec || !rec.time_in || rec.time_out || rec.status==='absent') continue;
+      if(shiftHasEnded(rec, s)){
+        await sb.from('attendance').update({ status:'absent' }).eq('id', rec.id);
+        rec.status = 'absent';
+      }
+    }
+  }
+
   if(toInsert.length && window.__DB__.isAdmin){
     await sb.from('attendance').upsert(toInsert, { onConflict:'student_id,date', ignoreDuplicates:true });
     // refresh cache with new absents
@@ -811,6 +823,40 @@ function shiftStatusFor(student, rec){
   if(now <  start + sch.absent_after_minutes)       return { key:'late',    label:'Late' };
   if(end != null && now > end)                      return { key:'absent',  label:'Absent (shift ended)' };
   return { key:'absent', label:'Absent (past cutoff)' };
+}
+
+// ============================================================================
+// UNIFIED ATTENDANCE STATE MACHINE (shared by Intern + Admin views)
+//   time-in only, on time  -> "Timed In" (green)
+//   time-in only, late     -> "Timed In" (yellow)
+//   timed out, was on time -> "Present"  (green)
+//   timed out, was late    -> "Late"     (yellow)
+//   no time-in, or timed in but never timed out by shift end -> "Absent" (red)
+// ============================================================================
+function shiftHasEnded(rec, student){
+  if(!rec) return true;
+  if(rec.date !== todayStr()) return true;              // any past day is closed
+  const sch = getOfficeSchedule();
+  const end = minutesOf((student && student.expected_time_out) || sch.end_time);
+  if(end == null) return false;
+  const d = new Date();
+  return (d.getHours()*60 + d.getMinutes()) > end;
+}
+
+// Returns { key:'present'|'late'|'absent', label, tone } — key is used for
+// tab filtering/counting, label+tone for display.
+function attendanceDisplay(rec, student){
+  if(!student && rec) student = window.__DB__.students.find(s=>s.id===rec.student_id);
+  if(!rec || !rec.time_in) return { key:'absent', label:'Absent', tone:'red' };
+  const late = rec.status === 'late';
+  if(rec.status === 'absent') return { key:'absent', label:'Absent', tone:'red' };
+  if(rec.time_out){
+    return late ? { key:'late', label:'Late', tone:'yellow' }
+                : { key:'present', label:'Present', tone:'green' };
+  }
+  if(shiftHasEnded(rec, student)) return { key:'absent', label:'Absent', tone:'red' };
+  return late ? { key:'late', label:'Timed In', tone:'yellow' }
+              : { key:'present', label:'Timed In', tone:'green' };
 }
 
 // ============================================================================
