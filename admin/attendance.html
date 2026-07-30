@@ -142,7 +142,7 @@ function drawRows(){
   ).sort((a,b)=> (b.time_in||'').localeCompare(a.time_in||'') || String(a.name).localeCompare(String(b.name)));
 
   const counts = { all: all.length, present:0, late:0, absent:0 };
-  all.forEach(r=>{ if(counts[r.status] != null) counts[r.status]++; });
+  all.forEach(r=>{ r._disp = attendanceDisplay(r); counts[r._disp.key]++; });
   document.getElementById('cnt-all').textContent = counts.all;
   document.getElementById('cnt-present').textContent = counts.present;
   document.getElementById('cnt-late').textContent = counts.late;
@@ -153,7 +153,7 @@ function drawRows(){
     ? `${DAY_ROWS.length} attendance record${DAY_ROWS.length===1?'':'s'} detected for ${fmtDate(CURRENT_DATE)}.`
     : `No attendance records were recorded on ${fmtDate(CURRENT_DATE)}.`;
 
-  const filtered = CURRENT_TAB==='all' ? all : all.filter(r=>r.status===CURRENT_TAB);
+  const filtered = CURRENT_TAB==='all' ? all : all.filter(r=>r._disp.key===CURRENT_TAB);
   const rows = document.getElementById('rows');
 
   if(!DAY_ROWS.length){
@@ -168,7 +168,7 @@ function drawRows(){
       <td><div class="cell-name">${profileIconHTML(r,30)}<span class="name-text">${escapeHtml(r.name)}</span>${r.archived?' <span class="pill gray">Archived</span>':''}</div></td>
       <td>${fmt12(r.time_in)}</td>
       <td>${fmt12(r.time_out)}</td>
-      <td><span class="badge badge-${r.status}">${r.status.charAt(0).toUpperCase()+r.status.slice(1)}</span></td>
+      <td><span class="badge badge-${r._disp.key}">${r._disp.label}</span></td>
       <td>${Number(r.hours||0).toFixed(2)}</td>
       <td style="text-align:right;white-space:nowrap">
         <button class="btn-icon" onclick="openRecord('${r.id}')" title="Edit record" aria-label="Edit record for ${escapeAttr(r.name)}">${ICONS.edit}</button>
