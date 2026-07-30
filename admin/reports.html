@@ -12,11 +12,9 @@
 <script src="../js/supabase-config.js"></script>
 <script src="../js/data.js"></script>
 <script src="../js/app.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.1/jspdf.plugin.autotable.min.js"></script>
 <script>
-let TREND_CHART = null;
 
 function isoDaysAgo(n){
   const d = new Date(); d.setDate(d.getDate() - n);
@@ -66,11 +64,6 @@ async function render(){
       <div class="stat-grid" id="stats"></div>
 
       <div class="card">
-        <div class="card-head"><div class="card-title">Attendance Trend</div></div>
-        <canvas id="trend" height="90"></canvas>
-      </div>
-
-      <div class="card">
         <div class="card-head">
           <div class="card-title">Attendance Records</div>
           <div class="flex gap-2">
@@ -87,15 +80,6 @@ async function render(){
         </div>
       </div>
 
-      <div class="card">
-        <div class="card-head"><div class="card-title">Per-Intern Summary</div></div>
-        <div class="table-wrap">
-          <table class="table" id="sumTbl">
-            <thead><tr><th>Intern ID</th><th>Name</th><th>Present</th><th>Late</th><th>Absent</th><th>Hours Rendered</th><th>Required</th><th>Progress</th></tr></thead>
-            <tbody id="sumRows"></tbody>
-          </table>
-        </div>
-      </div>
     </main>`;
 
   startClock('#clockBox');
@@ -159,51 +143,6 @@ function applyFilters(){
       <td><span class="badge badge-${r.status}">${r.status.charAt(0).toUpperCase()+r.status.slice(1)}</span></td>
     </tr>`).join('') || '<tr><td colspan="7" style="text-align:center;color:#888;padding:16px">No records match the selected filters.</td></tr>';
 
-  drawSummary(list);
-  drawTrend(list);
-}
-
-function drawSummary(list){
-  const f = currentFilters();
-  const students = window.__DB__.students.filter(s=> !f.student || s.id === f.student);
-  document.getElementById('sumRows').innerHTML = students.map(s=>{
-    const recs = list.filter(r=>r.student_id===s.id);
-    const p = recs.filter(r=>r.status==='present').length;
-    const l = recs.filter(r=>r.status==='late').length;
-    const a = recs.filter(r=>r.status==='absent').length;
-    const done = totalHours(s.id);
-    const pct = s.required_hours ? Math.min(100, (done/s.required_hours)*100).toFixed(0) : '0';
-    return `<tr>
-      <td style="font-weight:700;color:var(--blue-800)">${s.id}</td>
-      <td>${s.name}</td><td>${p}</td><td>${l}</td><td>${a}</td>
-      <td>${done}</td><td>${s.required_hours}</td>
-      <td style="min-width:120px">
-        <div class="progress-wrap"><div class="progress-bar" style="width:${pct}%"></div></div>
-        <span class="text-sm text-muted">${pct}%</span>
-      </td>
-    </tr>`;
-  }).join('') || '<tr><td colspan="8" style="text-align:center;color:#888;padding:16px">No interns to summarize.</td></tr>';
-}
-
-function drawTrend(list){
-  const byDate = {};
-  list.forEach(r=>{
-    byDate[r.date] = byDate[r.date] || { present:0, late:0, absent:0 };
-    byDate[r.date][r.status] = (byDate[r.date][r.status] || 0) + 1;
-  });
-  const labels = Object.keys(byDate).sort();
-  const canvas = document.getElementById('trend');
-  if(!canvas || typeof Chart === 'undefined') return;
-  if(TREND_CHART) TREND_CHART.destroy();
-  TREND_CHART = new Chart(canvas, {
-    type:'line',
-    data:{ labels: labels.map(d=>d.slice(5)), datasets:[
-      { label:'Present', data:labels.map(d=>byDate[d].present||0), borderColor:'#22c55e', backgroundColor:'rgba(34,197,94,.15)', tension:.3, fill:true },
-      { label:'Late', data:labels.map(d=>byDate[d].late||0), borderColor:'#fdc22b', backgroundColor:'rgba(253,194,43,.15)', tension:.3, fill:true },
-      { label:'Absent', data:labels.map(d=>byDate[d].absent||0), borderColor:'#ef4444', backgroundColor:'rgba(239,68,68,.12)', tension:.3, fill:true }
-    ]},
-    options:{ responsive:true, plugins:{ legend:{ position:'bottom' } }, scales:{ y:{ beginAtZero:true, ticks:{ precision:0 } } } }
-  });
 }
 
 function reportTitle(){
