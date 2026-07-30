@@ -1,4 +1,4 @@
-/ Supabase Edge Function: admin-manage
+// Supabase Edge Function: admin-manage
 // Deploy:  supabase functions deploy admin-manage --no-verify-jwt
 // Env vars (set automatically by Supabase): SUPABASE_URL, SUPABASE_ANON_KEY,
 // SUPABASE_SERVICE_ROLE_KEY.
