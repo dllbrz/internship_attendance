@@ -81,6 +81,39 @@ async function sendAdminMail(
   return { emailed: true };
 }
 
+// ---------------------------------------------------------------------------
+// Shared branded email shell — one consistent look for every admin email.
+// ---------------------------------------------------------------------------
+function mailShell(opts: {
+  kicker: string;
+  heading: string;
+  body: string;
+  ctaLabel?: string;
+  ctaUrl?: string;
+  footnote?: string;
+}) {
+  const btn = opts.ctaUrl && opts.ctaLabel
+    ? `<p style="margin:28px 0 8px"><a href="${opts.ctaUrl}" style="background:#12305c;color:#ffffff;text-decoration:none;padding:14px 30px;border-radius:10px;display:inline-block;font-weight:700;font-size:15px;letter-spacing:.01em">${opts.ctaLabel}</a></p>`
+    : "";
+  return `
+  <div style="font-family:Poppins,Segoe UI,Arial,sans-serif;background:#f5f7fb;padding:32px 16px">
+    <div style="max-width:580px;margin:0 auto;background:#ffffff;border-radius:14px;overflow:hidden;border:1px solid #e6e9f0">
+      <div style="background:#12305c;color:#ffffff;padding:24px 28px">
+        <div style="font-size:12px;letter-spacing:.14em;opacity:.75;text-transform:uppercase">${opts.kicker}</div>
+        <div style="font-size:22px;font-weight:700;margin-top:4px">${opts.heading}</div>
+      </div>
+      <div style="padding:28px;color:#1f2937;font-size:15px;line-height:1.65">
+        ${opts.body}
+        ${btn}
+        ${opts.footnote ? `<p style="color:#6b7280;font-size:13px;margin-top:24px">${opts.footnote}</p>` : ""}
+      </div>
+      <div style="background:#f8fafc;border-top:1px solid #eef1f6;padding:16px 28px;color:#94a3b8;font-size:12px">
+        Municipality of Naic &middot; Engineering Office &middot; OJT Attendance &amp; Internship Monitoring System
+      </div>
+    </div>
+  </div>`;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
@@ -263,21 +296,15 @@ Deno.serve(async (req) => {
       if (!RESEND_API_KEY || !email) {
         return json({ ok: true, emailed: false, reason: "mailer_not_configured" });
       }
-      const html = `
-        <div style="font-family:Poppins,Arial,sans-serif;background:#f5f7fb;padding:28px">
-          <div style="max-width:560px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;border:1px solid #e6e9f0">
-            <div style="background:#12305c;color:#fff;padding:20px 24px">
-              <div style="font-size:13px;letter-spacing:.08em;opacity:.8">ENGINEERING OFFICE</div>
-              <div style="font-size:20px;font-weight:700">Admin account activated</div>
-            </div>
-            <div style="padding:24px;color:#1f2937;font-size:15px;line-height:1.6">
-              <p>Hi ${name},</p>
-              <p>Your administrator account for the <strong>OJT Attendance &amp; Internship Monitoring System</strong> has been set up successfully. You can now sign in with <strong>${email}</strong> and the password you just created.</p>
-              ${LOGIN_URL ? `<p style="margin:24px 0"><a href="${LOGIN_URL}" style="background:#12305c;color:#fff;text-decoration:none;padding:12px 22px;border-radius:8px;display:inline-block;font-weight:600">Go to Admin Login</a></p>` : ""}
-              <p style="color:#6b7280;font-size:13px">If you did not set this up, contact the Engineering Office immediately.</p>
-            </div>
-          </div>
-        </div>`;
+      const html = mailShell({
+        kicker: "Engineering Office",
+        heading: `Welcome aboard, ${name}`,
+        body: `<p>Your administrator workspace is live. Sign in with <strong>${email}</strong> and the password you just created.</p>
+               <p>From the dashboard you can review daily attendance, verify intern hours, manage requirements and publish announcements.</p>`,
+        ctaLabel: "Open the Admin Dashboard",
+        ctaUrl: LOGIN_URL,
+        footnote: "Didn't set this up? Contact the Engineering Office right away.",
+      });
       const res = await fetch("https://api.resend.com/emails", {
         method: "POST",
         headers: {
@@ -287,7 +314,7 @@ Deno.serve(async (req) => {
         body: JSON.stringify({
           from: FROM,
           to: [email],
-          subject: "Your Engineering Office admin account is ready",
+          subject: "Your admin access is live",
           html,
         }),
       });
@@ -329,26 +356,19 @@ Deno.serve(async (req) => {
         return json({ ok: true, emailed: false, password, reason: "mailer_not_configured" });
       }
 
-      const html = `
-        <div style="font-family:Poppins,Arial,sans-serif;background:#f5f7fb;padding:28px">
-          <div style="max-width:560px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;border:1px solid #e6e9f0">
-            <div style="background:#12305c;color:#fff;padding:20px 24px">
-              <div style="font-size:13px;letter-spacing:.08em;opacity:.8">ENGINEERING OFFICE</div>
-              <div style="font-size:20px;font-weight:700">Your admin login details</div>
-            </div>
-            <div style="padding:24px;color:#1f2937;font-size:15px;line-height:1.6">
-              <p>Hi ${full_name},</p>
-              <p>Your administrator account for the <strong>OJT Attendance &amp; Internship Monitoring System</strong> is now active. Use these credentials to sign in:</p>
-              <table style="border-collapse:collapse;margin:16px 0">
-                <tr><td style="padding:6px 14px 6px 0;color:#6b7280">Email</td><td style="font-weight:700">${email}</td></tr>
-                <tr><td style="padding:6px 14px 6px 0;color:#6b7280">Password</td><td style="font-weight:700;font-family:monospace;font-size:16px">${password}</td></tr>
-              </table>
-              ${LOGIN_URL ? `<p style="margin:24px 0"><a href="${LOGIN_URL}" style="background:#12305c;color:#fff;text-decoration:none;padding:12px 22px;border-radius:8px;display:inline-block;font-weight:600">Go to Admin Login</a></p>` : ""}
-              <p style="color:#b45309;font-size:13px"><strong>Please change this password</strong> after your first sign-in (Account &rarr; Change Password).</p>
-              <p style="color:#6b7280;font-size:13px">If you did not expect this email, contact the Engineering Office immediately.</p>
-            </div>
-          </div>
-        </div>`;
+      const html = mailShell({
+        kicker: "Engineering Office",
+        heading: `Your admin keys, ${full_name}`,
+        body: `<p>Your administrator account is active. Use the details below for your first sign-in:</p>
+               <table style="border-collapse:collapse;margin:18px 0;font-size:15px">
+                 <tr><td style="padding:6px 16px 6px 0;color:#6b7280">Email</td><td style="font-weight:700">${email}</td></tr>
+                 <tr><td style="padding:6px 16px 6px 0;color:#6b7280">Temporary password</td><td style="font-weight:700;font-family:ui-monospace,Menlo,monospace;font-size:16px">${password}</td></tr>
+               </table>
+               <p style="color:#b45309"><strong>Swap this for a password only you know</strong> under Account &rarr; Change Password.</p>`,
+        ctaLabel: "Sign in now",
+        ctaUrl: LOGIN_URL,
+        footnote: "Not expecting this email? Contact the Engineering Office right away.",
+      });
       const res = await fetch("https://api.resend.com/emails", {
         method: "POST",
         headers: {
@@ -358,7 +378,7 @@ Deno.serve(async (req) => {
         body: JSON.stringify({
           from: FROM,
           to: [email],
-          subject: "Your Engineering Office admin login details",
+          subject: "Your admin sign-in details",
           html,
         }),
       });
@@ -417,28 +437,18 @@ Deno.serve(async (req) => {
         });
 
       const LOGIN_URL = Deno.env.get("ADMIN_LOGIN_URL") || "";
-      const html = `
-        <div style="font-family:Poppins,Arial,sans-serif;background:#f5f7fb;padding:28px">
-          <div style="max-width:560px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;border:1px solid #e6e9f0">
-            <div style="background:#12305c;color:#fff;padding:20px 24px">
-              <div style="font-size:13px;letter-spacing:.08em;opacity:.8">ENGINEERING OFFICE</div>
-              <div style="font-size:20px;font-weight:700">Your admin account is ready</div>
-            </div>
-            <div style="padding:24px;color:#1f2937;font-size:15px;line-height:1.6">
-              <p>Hi ${full_name},</p>
-              <p>Your administrator account for the <strong>OJT Attendance &amp; Internship Monitoring System</strong> is now active. Sign in with:</p>
-              <table style="border-collapse:collapse;margin:16px 0">
-                <tr><td style="padding:6px 14px 6px 0;color:#6b7280">Email</td><td style="font-weight:700">${email}</td></tr>
-                <tr><td style="padding:6px 14px 6px 0;color:#6b7280">Password</td><td>the password you just created</td></tr>
-              </table>
-              ${LOGIN_URL ? `<p style="margin:24px 0"><a href="${LOGIN_URL}" style="background:#12305c;color:#fff;text-decoration:none;padding:12px 22px;border-radius:8px;display:inline-block;font-weight:600">Go to Admin Login</a></p>` : ""}
-              <p style="color:#6b7280;font-size:13px">If you did not set this up, contact the Engineering Office immediately.</p>
-            </div>
-          </div>
-        </div>`;
+      const html = mailShell({
+        kicker: "Engineering Office",
+        heading: `You're all set, ${full_name}`,
+        body: `<p>Your administrator account is active. Sign in with <strong>${email}</strong> and the password you chose during registration.</p>
+               <p>You now have full access to attendance monitoring, intern records, requirements and announcements.</p>`,
+        ctaLabel: "Open the Admin Dashboard",
+        ctaUrl: LOGIN_URL,
+        footnote: "Didn't set this up? Contact the Engineering Office right away.",
+      });
       const mail = await sendAdminMail(
         email,
-        "Your Engineering Office admin account is ready",
+        "Your admin access is live",
         html,
       );
       return json({ ok: true, email, emailed: mail.emailed, reason: mail.reason });
