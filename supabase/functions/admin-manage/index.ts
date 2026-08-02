@@ -30,6 +30,57 @@ function json(body: unknown, status = 200) {
   });
 }
 
+
+// ---------------------------------------------------------------------------
+// Mailer: uses SMTP when SMTP_* secrets are set, otherwise Resend, otherwise
+// silently reports "not configured" so the onboarding flow never breaks.
+// ---------------------------------------------------------------------------
+async function sendAdminMail(
+  to: string,
+  subject: string,
+  html: string,
+): Promise<{ emailed: boolean; reason?: string }> {
+  const host = Deno.env.get("SMTP_HOST");
+  const user = Deno.env.get("SMTP_USER");
+  const pass = Deno.env.get("SMTP_PASS");
+  const from = Deno.env.get("SMTP_FROM") || user || "";
+  if (host && user && pass) {
+    try {
+      const { SMTPClient } = await import(
+        "https://deno.land/x/denomailer@1.6.0/mod.ts"
+      );
+      const port = Number(Deno.env.get("SMTP_PORT") || "465");
+      const client = new SMTPClient({
+        connection: { hostname: host, port, tls: port === 465, auth: { username: user, password: pass } },
+      });
+      await client.send({ from, to, subject, html, content: "text/html" });
+      await client.close();
+      return { emailed: true };
+    } catch (e) {
+      return { emailed: false, reason: (e as Error).message };
+    }
+  }
+
+  const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY");
+  if (!RESEND_API_KEY) return { emailed: false, reason: "mailer_not_configured" };
+  const res = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${RESEND_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      from: Deno.env.get("ADMIN_MAIL_FROM") ||
+        "Engineering Office <onboarding@resend.dev>",
+      to: [to],
+      subject,
+      html,
+    }),
+  });
+  if (!res.ok) return { emailed: false, reason: await res.text() };
+  return { emailed: true };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
@@ -317,7 +368,84 @@ Deno.serve(async (req) => {
       return json({ ok: true, emailed: true, email });
     }
 
+    // Invited admin submitted the onboarding form on
+    // admin-setup-password.html: save profile details + their chosen password,
+    // mark the account activated, then email a confirmation.
+    if (action === "complete_setup") {
+      const { data: me } = await admin.auth.getUser(jwt);
+      const user = me?.user;
+      const email = user?.email || "";
+      if (!email) return json({ error: "No email on this account." }, 400);
+
+      const meta = (user?.user_metadata || {}) as Record<string, unknown>;
+      if (meta["admin_activated"] === true) {
+        return json(
+          { error: "This invitation has already been used. Please sign in instead." },
+          400,
+        );
+      }
+
+      const full_name = String(body.full_name || "").trim();
+      const position = String(body.position || "").trim();
+      const contact = String(body.contact || "").trim();
+      const password = String(body.password || "");
+      if (!full_name) return json({ error: "Full name is required." }, 400);
+      if (password.length < 8) {
+        return json({ error: "Password must be at least 8 characters." }, 400);
+      }
+
+      const { error: updErr } = await admin.auth.admin.updateUserById(callerId, {
+        password,
+        email_confirm: true,
+        user_metadata: {
+          ...meta,
+          full_name,
+          position,
+          contact,
+          invited_as: "admin",
+          admin_activated: true,
+          activated_at: new Date().toISOString(),
+        },
+      });
+      if (updErr) return json({ error: updErr.message }, 400);
+
+      // Make sure the admin role row exists (idempotent).
+      await admin
+        .from("user_roles")
+        .upsert({ user_id: callerId, role: "admin" }, {
+          onConflict: "user_id,role",
+        });
+
+      const LOGIN_URL = Deno.env.get("ADMIN_LOGIN_URL") || "";
+      const html = `
+        <div style="font-family:Poppins,Arial,sans-serif;background:#f5f7fb;padding:28px">
+          <div style="max-width:560px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;border:1px solid #e6e9f0">
+            <div style="background:#12305c;color:#fff;padding:20px 24px">
+              <div style="font-size:13px;letter-spacing:.08em;opacity:.8">ENGINEERING OFFICE</div>
+              <div style="font-size:20px;font-weight:700">Your admin account is ready</div>
+            </div>
+            <div style="padding:24px;color:#1f2937;font-size:15px;line-height:1.6">
+              <p>Hi ${full_name},</p>
+              <p>Your administrator account for the <strong>OJT Attendance &amp; Internship Monitoring System</strong> is now active. Sign in with:</p>
+              <table style="border-collapse:collapse;margin:16px 0">
+                <tr><td style="padding:6px 14px 6px 0;color:#6b7280">Email</td><td style="font-weight:700">${email}</td></tr>
+                <tr><td style="padding:6px 14px 6px 0;color:#6b7280">Password</td><td>the password you just created</td></tr>
+              </table>
+              ${LOGIN_URL ? `<p style="margin:24px 0"><a href="${LOGIN_URL}" style="background:#12305c;color:#fff;text-decoration:none;padding:12px 22px;border-radius:8px;display:inline-block;font-weight:600">Go to Admin Login</a></p>` : ""}
+              <p style="color:#6b7280;font-size:13px">If you did not set this up, contact the Engineering Office immediately.</p>
+            </div>
+          </div>
+        </div>`;
+      const mail = await sendAdminMail(
+        email,
+        "Your Engineering Office admin account is ready",
+        html,
+      );
+      return json({ ok: true, email, emailed: mail.emailed, reason: mail.reason });
+    }
+
     if (action === "delete") {
+
       const target = String(body.user_id || "");
       if (!target) return json({ error: "user_id required" }, 400);
       if (target === callerId) {
