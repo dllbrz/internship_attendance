@@ -1154,9 +1154,15 @@ async function notifyAdminSetupComplete(){
   return adminManage('setup_complete', {});
 }
 
-// Called by admin-setup-password.html the moment an invited admin opens the
-// "Accept invitation" link. The Edge Function generates a password for the
-// account and emails it to the invited address.
-async function sendAdminCredentials(fullName){
-  return adminManage('send_credentials', { full_name:(fullName||'').trim() });
+// Called by admin-setup-password.html when the invited admin submits the
+// onboarding form. Saves their profile details + chosen password, marks the
+// account activated and emails a confirmation.
+async function completeAdminSetup(details){
+  const d = details || {};
+  return adminManage('complete_setup', {
+    full_name: (d.fullName||'').trim(),
+    position:  (d.position||'').trim(),
+    contact:   (d.contact||'').trim(),
+    password:  d.password || ''
+  });
 }
