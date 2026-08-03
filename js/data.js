@@ -1141,11 +1141,24 @@ async function applyScheduleToStudents(internIds, schedule){
 // ============================================================================
 // ADMIN INVITATIONS — send an email invite link instead of a manual password
 // ============================================================================
+function publicSiteUrl(){
+  const configured = (window.PUBLIC_SITE_URL || '').trim().replace(/\/+$/,'');
+  if(configured) return configured;
+  return window.location.origin;
+}
+
 async function inviteAdmin(email, fullName){
   if(!email || !email.includes('@')) return { ok:false, error:'Enter a valid email address.' };
-  // Invited admins land on the dedicated "Set Your Password" portal.
-  const redirect = authUrl('admin-setup-password.html');
-  return adminManage('invite', { email:email.trim().toLowerCase(), full_name:(fullName||'').trim(), redirect_to: redirect });
+  // Invited admins land on the dedicated admin registration page. The base
+  // address comes from PUBLIC_SITE_URL so the emailed link never points at a
+  // password-protected Vercel preview deployment.
+  const site = publicSiteUrl();
+  return adminManage('invite', {
+    email: email.trim().toLowerCase(),
+    full_name: (fullName||'').trim(),
+    site_url: site,
+    redirect_to: site + '/admin-setup-password.html'
+  });
 }
 
 // Called by admin-setup-password.html right after the invited admin saves a
