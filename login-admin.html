@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Admin Login — Naic OJT</title>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+<div class="auth-wrap">
+  <aside class="auth-visual">
+    <a href="index.html" class="brand" style="text-decoration:none">
+      <div class="brand-badge"><img src="assets/naic-engineering-logo.png" alt="Naic Engineering Office seal"></div>
+      <div class="brand-text"><small>Admin Portal</small><strong>Municipality of Naic</strong></div>
+    </a>
+    <h2>Manage OJT attendance <span>with confidence.</span></h2>
+    <div class="quote">Authorized Engineering Office administrators only.</div>
+  </aside>
+  <section class="auth-form">
+    <div class="auth-form-inner">
+      <h1>Admin Login</h1>
+      <p class="sub">Sign in to manage interns, attendance, schedules, requirements, and announcements.</p>
+      <div class="form-success" id="ok" role="status" aria-live="polite"></div>
+      <form id="loginForm">
+        <div class="form-group">
+          <label for="u">Email</label>
+          <input type="email" class="form-control" id="u" required autofocus autocomplete="username" placeholder="name@naic.gov.ph">
+        </div>
+        <div class="form-group">
+          <label for="p">Password</label>
+          <input type="password" class="form-control" id="p" required autocomplete="current-password" placeholder="••••••••">
+        </div>
+        <div class="form-error" id="err" role="alert" aria-live="assertive"></div>
+        <button class="btn btn-primary btn-block" id="btn" type="submit">Sign In</button>
+      </form>
+      <div class="auth-switch"><a href="forgot-password.html">Forgot password?</a></div>
+      <div class="auth-switch"><a href="index.html">Back to Home</a></div>
+    </div>
+  </section>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="js/supabase-config.js"></script>
+<script src="js/data.js"></script>
+<script>
+const params = new URLSearchParams(window.location.search);
+const okBox = document.getElementById('ok');
+if(params.get('setup') === 'complete'){
+  okBox.textContent = 'Your administrator account is ready. Sign in with the password you created.';
+  okBox.classList.add('show');
+}
+
+document.getElementById('loginForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const button = document.getElementById('btn');
+  const errorBox = document.getElementById('err');
+  errorBox.classList.remove('show');
+  button.disabled = true;
+  button.textContent = 'Signing in…';
+
+  const result = await loginAdmin(
+    document.getElementById('u').value.trim(),
+    document.getElementById('p').value
+  );
+
+  if(!result.ok){
+    errorBox.textContent = result.error || 'Unable to sign in.';
+    errorBox.classList.add('show');
+    button.disabled = false;
+    button.textContent = 'Sign In';
+    return;
+  }
+  window.location.href = 'admin/dashboard.html';
+});
+</script>
+</body>
+</html>
