@@ -6,7 +6,8 @@
 // Actions (POST JSON body):
 //   { action: "list" }
 //   { action: "create", email, password, full_name }
-//   { action: "invite", email, full_name, redirect_to }
+//   { action: "invite", email, full_name, redirect_to, site_url }
+//   { action: "complete_setup", full_name, position, contact, password }
 //   { action: "send_credentials", full_name }
 //   { action: "delete", user_id }
 //
@@ -156,16 +157,6 @@ Deno.serve(async (req) => {
     }
   }
 
-  // Verify caller is admin
-  const { data: roles, error: roleErr } = await admin
-    .from("user_roles")
-    .select("role")
-    .eq("user_id", callerId);
-  if (roleErr) return json({ error: roleErr.message }, 500);
-  if (!(roles || []).some((r) => r.role === "admin")) {
-    return json({ error: "Forbidden: admin role required" }, 403);
-  }
-
   let body: any = {};
   try {
     body = await req.json();
@@ -173,6 +164,21 @@ Deno.serve(async (req) => {
     return json({ error: "Invalid JSON body" }, 400);
   }
   const action = String(body.action || "");
+
+  // Self-service onboarding actions are performed by the *invited* user with
+  // their own one-time invitation session, so they are authorised by the
+  // invitation metadata instead of the admin-role gate below.
+  const SELF_SERVICE = new Set(["complete_setup", "setup_complete"]);
+
+  // Verify caller is admin
+  const { data: roles, error: roleErr } = await admin
+    .from("user_roles")
+    .select("role")
+    .eq("user_id", callerId);
+  if (roleErr) return json({ error: roleErr.message }, 500);
+  if (!(roles || []).some((r) => r.role === "admin") && !SELF_SERVICE.has(action)) {
+    return json({ error: "Forbidden: admin role required" }, 403);
+  }
 
   try {
     if (action === "list") {
@@ -255,28 +261,149 @@ Deno.serve(async (req) => {
     }
 
     // Email an invitation link instead of setting a password manually.
+    // We generate the invitation link ourselves and deliver a branded email so
+    // the button always points at the onboarding page on the production domain
+    // (Supabase's default template can be mis-configured and produce a broken
+    // URL or land the invitee on the project's Site URL instead).
     if (action === "invite") {
       const email = String(body.email || "").trim().toLowerCase();
       const full_name = String(body.full_name || "").trim();
       const redirectTo = String(body.redirect_to || "");
+      // Base URL of the deployed site, e.g. https://your-app.vercel.app
+      const siteUrl = String(
+        body.site_url || Deno.env.get("PUBLIC_SITE_URL") || "",
+      ).replace(/\/+$/, "");
       if (!email || !email.includes("@")) {
         return json({ error: "A valid email address is required." }, 400);
       }
 
-      const { data: invited, error: inviteErr } =
-        await admin.auth.admin.inviteUserByEmail(email, {
-          data: { full_name, invited_as: "admin" },
-          redirectTo: redirectTo || undefined,
+      // Is this address already a user?
+      let existing: any = null;
+      {
+        let page = 1;
+        const perPage = 200;
+        for (;;) {
+          const { data } = await admin.auth.admin.listUsers({ page, perPage });
+          const users = data?.users || [];
+          existing = users.find((u) => (u.email || "").toLowerCase() === email) ||
+            null;
+          if (existing || users.length < perPage) break;
+          page += 1;
+        }
+      }
+      if (existing?.user_metadata?.admin_activated === true) {
+        return json(
+          { error: "That email already belongs to an active administrator." },
+          400,
+        );
+      }
+
+      const setupBase = siteUrl
+        ? `${siteUrl}/admin-setup-password.html`
+        : (redirectTo || "");
+
+      let linkType = "invite";
+      let hashedToken = "";
+      let actionLink = "";
+
+      if (existing) {
+        // Refresh their details, then mint a fresh single-use link.
+        await admin.auth.admin.updateUserById(existing.id, {
+          user_metadata: {
+            ...(existing.user_metadata || {}),
+            full_name: full_name || existing.user_metadata?.full_name || "",
+            invited_as: "admin",
+            admin_activated: false,
+          },
         });
-      if (inviteErr) return json({ error: inviteErr.message }, 400);
-      const newId = invited.user!.id;
+        linkType = "magiclink";
+        const { data: link, error: linkErr } = await admin.auth.admin
+          .generateLink({
+            type: "magiclink",
+            email,
+            options: { redirectTo: setupBase || undefined },
+          });
+        if (linkErr) return json({ error: linkErr.message }, 400);
+        hashedToken = link?.properties?.hashed_token || "";
+        actionLink = link?.properties?.action_link || "";
+      } else {
+        const { data: link, error: linkErr } = await admin.auth.admin
+          .generateLink({
+            type: "invite",
+            email,
+            options: {
+              data: { full_name, invited_as: "admin", admin_activated: false },
+              redirectTo: setupBase || undefined,
+            },
+          });
+        if (linkErr) return json({ error: linkErr.message }, 400);
+        hashedToken = link?.properties?.hashed_token || "";
+        actionLink = link?.properties?.action_link || "";
+      }
 
-      const { error: roleInsErr } = await admin
-        .from("user_roles")
-        .upsert({ user_id: newId, role: "admin" }, { onConflict: "user_id,role" });
-      if (roleInsErr) return json({ error: roleInsErr.message }, 500);
+      // Grant the admin role now; access only becomes usable once they finish
+      // onboarding and can sign in.
+      const { data: whoRes } = await admin.auth.admin.listUsers({
+        page: 1,
+        perPage: 200,
+      });
+      const newId = existing?.id ||
+        (whoRes?.users || []).find((u) =>
+          (u.email || "").toLowerCase() === email
+        )?.id || "";
+      if (newId) {
+        const { error: roleInsErr } = await admin
+          .from("user_roles")
+          .upsert({ user_id: newId, role: "admin" }, {
+            onConflict: "user_id,role",
+          });
+        if (roleInsErr) return json({ error: roleInsErr.message }, 500);
+      }
 
-      return json({ ok: true, user_id: newId, invited: true });
+      const setupUrl = setupBase && hashedToken
+        ? `${setupBase}?token_hash=${encodeURIComponent(hashedToken)}&type=${linkType}`
+        : actionLink;
+
+      const greeting = full_name ? `Hi ${full_name},` : "Hi there,";
+      const html = mailShell({
+        kicker: "Municipality of Naic \u00b7 Engineering Office",
+        heading: "Your administrator access is ready",
+        body:
+          `<p>${greeting}</p>
+           <p>You have been added as an administrator of the <strong>OJT Attendance &amp; Internship Monitoring System</strong>. Administrators review daily time-in and time-out records, verify rendered hours, track intern requirements and publish announcements.</p>
+           <p>One short step is left: create your profile and choose a password.</p>`,
+        ctaLabel: "Set up my account",
+        ctaUrl: setupUrl,
+        footnote:
+          `The link above works once and stays valid for 1 hour. If it has lapsed, ask the Engineering Office for a new one. Not expecting this? You can ignore this message.`,
+      });
+      const mail = await sendAdminMail(
+        email,
+        "Set up your administrator account",
+        html,
+      );
+
+      if (!mail.emailed) {
+        // No SMTP configured — fall back to Supabase's own invite mailer.
+        if (!existing) {
+          const { error: inviteErr } = await admin.auth.admin
+            .inviteUserByEmail(email, {
+              data: { full_name, invited_as: "admin", admin_activated: false },
+              redirectTo: setupBase || undefined,
+            });
+          if (inviteErr) return json({ error: inviteErr.message }, 400);
+        }
+        return json({
+          ok: true,
+          user_id: newId,
+          invited: true,
+          emailed: false,
+          reason: mail.reason,
+          setup_url: setupUrl,
+        });
+      }
+
+      return json({ ok: true, user_id: newId, invited: true, emailed: true });
     }
 
     // Send the "your admin account is ready" confirmation email. Called by
@@ -438,17 +565,21 @@ Deno.serve(async (req) => {
 
       const LOGIN_URL = Deno.env.get("ADMIN_LOGIN_URL") || "";
       const html = mailShell({
-        kicker: "Engineering Office",
-        heading: `You're all set, ${full_name}`,
-        body: `<p>Your administrator account is active. Sign in with <strong>${email}</strong> and the password you chose during registration.</p>
-               <p>You now have full access to attendance monitoring, intern records, requirements and announcements.</p>`,
-        ctaLabel: "Open the Admin Dashboard",
+        kicker: "Municipality of Naic \u00b7 Engineering Office",
+        heading: `Welcome to the team, ${full_name}`,
+        body: `<p>Your administrator account is now active.</p>
+               <table style="border-collapse:collapse;margin:18px 0;font-size:15px">
+                 <tr><td style="padding:6px 16px 6px 0;color:#6b7280">Sign in with</td><td style="font-weight:700">${email}</td></tr>
+                 <tr><td style="padding:6px 16px 6px 0;color:#6b7280">Password</td><td>the one you just chose</td></tr>
+               </table>
+               <p>You can now monitor daily attendance, verify rendered hours, manage intern records and requirements, and post announcements.</p>`,
+        ctaLabel: "Go to my dashboard",
         ctaUrl: LOGIN_URL,
-        footnote: "Didn't set this up? Contact the Engineering Office right away.",
+        footnote: "If you did not create this account, contact the Engineering Office right away.",
       });
       const mail = await sendAdminMail(
         email,
-        "Your admin access is live",
+        "Your administrator account is active",
         html,
       );
       return json({ ok: true, email, emailed: mail.emailed, reason: mail.reason });
