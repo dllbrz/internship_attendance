@@ -550,7 +550,8 @@ tbody tr:last-child td{border-bottom:none}
 /* ---------------------------------------------------------------------------
    Branded page loader (replaces the bare "Loading…" text on every page)
    --------------------------------------------------------------------------- */
-.app-shell.shell-loading{display:block}
+.app-shell.shell-loading{display:grid}
+.app-shell.shell-loading:has(> .page-loader){display:block}
 .page-loader{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:40px 20px;background:var(--gray-50,#f4f6fb);animation:pl-fade .25s ease-in}
 .page-loader-logo{width:56px;height:56px;object-fit:contain;opacity:.9}
 .page-loader-spinner{width:34px;height:34px;border-radius:50%;border:3px solid rgba(13,43,107,.15);border-top-color:var(--blue-800,#0d2b6b);animation:pl-spin .8s linear infinite}
