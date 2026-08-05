@@ -126,7 +126,7 @@ function renderTopbar(title,subtitle,extra=''){
   return `
     <div class="topbar">
       <div class="topbar-left flex items-center gap-3">
-        <button class="back-btn" onclick="goBack()" title="Go back"><span class="nav-icon">${ICONS.back}</span> Back</button>
+        <!-- On-screen "Back" button removed by request: users navigate with the browser/device back gesture. -->
         <button class="hamburger" onclick="toggleSidebar()" aria-label="Toggle navigation menu" aria-controls="sidebar"><span class="nav-icon" aria-hidden="true">${ICONS.menu}</span></button>
         <div>
           <h1>${title}</h1>
@@ -299,10 +299,22 @@ function escapeHtml(s){
 function escapeAttr(s){ return escapeHtml(s); }
 
 
-/* Back-button logout guard: only runs on authenticated pages (/admin/, /student/).
-   Public pages (landing, login, signup) navigate normally. In-page anchor
-   links (#features, #about, ...) are hash-only navigations and never trigger
-   the logout prompt. */
+/* ============================================================================
+   Back-navigation behaviour (mobile + desktop)
+   ----------------------------------------------------------------------------
+   Goal:
+   1. Pressing back on any authenticated page normally goes to the PREVIOUS
+      in-app page (Reports -> Dashboard, Profile -> Reports, ...).
+   2. Only on the FIRST authenticated page of the session (the page you land on
+      right after logging in — there is no earlier in-app page to return to)
+      does back ask for confirmation before signing you out:
+         "Leave this page? Going back will log you out of your account. Continue?"
+
+   How the "first page" is detected without breaking normal history: each
+   authenticated page load stamps an increasing index into history.state. The
+   index is restored (not re-issued) when the user returns to a page via back,
+   so depth stays stable. Index 1 == entry page == guard is armed.
+   ============================================================================ */
 function isAuthenticatedPage(){
   const p = location.pathname.toLowerCase();
   if(/\/(admin|student)\//.test(p)) {
@@ -310,24 +322,47 @@ function isAuthenticatedPage(){
   }
   return false;
 }
+
+const NAV_DEPTH_KEY = 'naic_ojt_nav_depth';
+
+function _navIndexForThisPage(){
+  const st = (history.state && typeof history.state === 'object') ? history.state : null;
+  if(st && typeof st.ojtNavIdx === 'number') return st.ojtNavIdx;   // revisited via back/forward
+  let last = 0;
+  try { last = parseInt(sessionStorage.getItem(NAV_DEPTH_KEY) || '0', 10) || 0; } catch(_){}
+  const idx = last + 1;
+  try { sessionStorage.setItem(NAV_DEPTH_KEY, String(idx)); } catch(_){}
+  try { history.replaceState({ ...(st || {}), ojtNavIdx: idx }, ''); } catch(_){}
+  return idx;
+}
+
 function installBackGuard(){
   if(window.__BACK_GUARD__) return;
   if(!isAuthenticatedPage()) return;      // landing/login pages: no guard at all
   window.__BACK_GUARD__ = true;
 
+  const navIdx = _navIndexForThisPage();
+
+  // Not the entry page → let the browser/device back button work normally.
+  if(navIdx > 1) return;
+
+  // Entry page: arm a sentinel history entry so we can intercept the back press.
   let lastHash = location.hash;
   let busy = false;
-  try { history.pushState({guard:1}, ''); } catch(_){}
+  try { history.pushState({ ojtNavIdx: navIdx, guard:1 }, ''); } catch(_){}
 
   window.addEventListener('popstate', async () => {
     // Hash-only navigation (anchor links / scroll-spy): let it through.
     if(location.hash !== lastHash){ lastHash = location.hash; return; }
     if(busy) return;
     busy = true;
-    try { history.pushState({guard:1}, ''); } catch(_){}
+    // Re-arm the sentinel so a cancelled prompt keeps the user on this page.
+    try { history.pushState({ ojtNavIdx: navIdx, guard:1 }, ''); } catch(_){}
     if(typeof confirmDialog !== 'function'){
       busy = false;
-      if(typeof logout==='function') logout({confirm:false});
+      if(window.confirm('Leave this page?\n\nGoing back will log you out of your account. Continue?')){
+        if(typeof logout==='function') logout({confirm:false});
+      }
       return;
     }
     const ok = await confirmDialog({
@@ -343,4 +378,9 @@ function installBackGuard(){
   // back navigation away from the page.
   window.addEventListener('hashchange', () => { lastHash = location.hash; });
 }
+
+// Reset the navigation depth whenever a fresh sign-in happens, so the first
+// page after login is always treated as the entry page.
+function resetNavDepth(){ try { sessionStorage.removeItem(NAV_DEPTH_KEY); } catch(_){} }
+
 document.addEventListener('DOMContentLoaded', () => { setTimeout(installBackGuard, 100); });
