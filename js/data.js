@@ -43,6 +43,25 @@ function _installPageLoader(){
           <span></span><span></span><span></span>
         </div>
       </div>`;
+
+    // CRITICAL: `.shell-loading` forces `display:block` so the spinner can be
+    // centred. The page grid (sidebar | main) only works once that class is
+    // gone, so watch #shell and drop the class the moment the page swaps its
+    // own markup in. Without this the sidebar renders full-width and the real
+    // content is pushed off-screen (blank white page).
+    const observer = new MutationObserver(() => {
+      if(!shell.querySelector('.page-loader')){
+        shell.classList.remove('shell-loading');
+        observer.disconnect();
+      }
+    });
+    observer.observe(shell, { childList:true, subtree:false });
+    // Belt and braces: if anything mutates the shell without the observer
+    // firing (older browsers, sync innerHTML in the same tick), clear it too.
+    window.clearPageLoader = function(){
+      shell.classList.remove('shell-loading');
+      try{ observer.disconnect(); }catch(_){}
+    };
   }catch(_){}
 }
 if(document.readyState === 'loading'){
