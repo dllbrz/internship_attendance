@@ -20,6 +20,37 @@ window.sb = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_AN
   }
 });
 
+/* ---------------------------------------------------------------------------
+   Branded page loader.
+   Every authenticated page ships `<div id="shell">Loading…</div>` as its
+   initial markup. This file runs while that node is already in the DOM, so we
+   swap the bare text for a branded skeleton/spinner. The page code replaces
+   #shell.innerHTML once data is ready, which removes the loader automatically.
+   --------------------------------------------------------------------------- */
+function _installPageLoader(){
+  try{
+    const shell = document.getElementById('shell');
+    if(!shell) return;
+    if(!/loading/i.test(shell.textContent || '')) return;   // page already rendered
+    const logo = (window.location.pathname.match(/\/(student|admin)\//) ? '../' : '') + 'assets/naic-engineering-logo.png';
+    shell.classList.add('shell-loading');
+    shell.innerHTML = `
+      <div class="page-loader" role="status" aria-live="polite" aria-label="Loading page">
+        <img class="page-loader-logo" src="${logo}" alt="" aria-hidden="true">
+        <div class="page-loader-spinner" aria-hidden="true"></div>
+        <div class="page-loader-text">Preparing your page...</div>
+        <div class="page-loader-skeleton" aria-hidden="true">
+          <span></span><span></span><span></span>
+        </div>
+      </div>`;
+  }catch(_){}
+}
+if(document.readyState === 'loading'){
+  document.addEventListener('DOMContentLoaded', _installPageLoader);
+} else {
+  _installPageLoader();
+}
+
 const REQUIREMENT_TYPES = [
   {key:'moa', label:'MOA'},
   {key:'internship_agreement', label:'Internship Agreement'},
@@ -185,14 +216,30 @@ async function bootstrap(){
   const isAdmin = (roles||[]).some(r=>r.role==='admin');
   window.__DB__.isAdmin = isAdmin;
 
-  // load ALL profiles (admin sees all; student RLS returns only own + admin only sees own — plus we backfill)
-  const { data: profiles, error: profileError } = await sb.from('profiles').select('*');
+  // PERFORMANCE: profiles / announcements / attendance / requirements do not
+  // depend on each other, so they are fetched CONCURRENTLY instead of one
+  // round-trip after another. This is what removes the long "Loading…" wait.
+  const attendanceQuery = isAdmin
+    ? sb.from('attendance').select('*').is('deleted_at', null).order('date',{ascending:false})
+    : sb.from('attendance').select('*').eq('student_id', userId).is('deleted_at', null).order('date',{ascending:false});
+  const requirementsQuery = isAdmin
+    ? sb.from('requirements').select('*')
+    : sb.from('requirements').select('*').eq('student_id', userId);
+
+  const [profileRes, anncRes, attRes, reqRes] = await Promise.all([
+    sb.from('profiles').select('*'),
+    sb.from('announcements').select('*').order('created_at',{ascending:false}),
+    attendanceQuery,
+    requirementsQuery
+  ]);
+
+  const { data: profiles, error: profileError } = profileRes;
   if(profileError){ console.error('Profile load failed:', profileError); throw profileError; }
   window.__DB__.students = (profiles||[]).map(_mapProfileRow);
   const internIdMap = new Map((profiles||[]).map(p=>[p.id, p.intern_id]));
 
   // announcements
-  const { data: annc, error: annError } = await sb.from('announcements').select('*').order('created_at',{ascending:false});
+  const { data: annc, error: annError } = anncRes;
   if(annError){ console.warn('Announcements load failed:', annError); }
   window.__DB__.announcements = (annc||[]).map(a=>({
     id: a.id, title: a.title, body: a.body, author: a.author,
@@ -200,13 +247,7 @@ async function bootstrap(){
   }));
 
   // attendance
-  let att;
-  let attError;
-  if(isAdmin){
-    ({data: att, error: attError} = await sb.from('attendance').select('*').is('deleted_at', null).order('date',{ascending:false}));
-  } else {
-    ({data: att, error: attError} = await sb.from('attendance').select('*').eq('student_id', userId).is('deleted_at', null).order('date',{ascending:false}));
-  }
+  const { data: att, error: attError } = attRes;
   if(attError){ console.warn('Attendance load failed:', attError); }
   window.__DB__.attendance = (att||[]).map(a=>_mapAttendance(a, internIdMap));
 
@@ -242,9 +283,8 @@ async function bootstrap(){
     throw new Error(isAdmin ? 'Admin account is missing its role setup.' : 'Your intern profile was not created. Re-run sql/schema.sql, then create the account again.');
   }
 
-  // requirements for current student (or all for admin)
-  const reqQuery = isAdmin ? sb.from('requirements').select('*') : sb.from('requirements').select('*').eq('student_id', userId);
-  const { data: reqs, error: reqError } = await reqQuery;
+  // requirements for current student (or all for admin) — fetched in parallel above
+  const { data: reqs, error: reqError } = reqRes;
   if(reqError){ console.warn('Requirements load failed:', reqError); }
   (reqs||[]).forEach(r=>{
     const iid = internIdMap.get(r.student_id);
@@ -303,6 +343,11 @@ async function autoMarkAbsent(){
   }
 }
 
+// Navigation-depth reset: the first authenticated page after a sign-in must be
+// treated as the "entry page" so the back-button logout prompt appears only
+// there (see installBackGuard in js/app.js).
+function _resetNavDepth(){ try { sessionStorage.removeItem('naic_ojt_nav_depth'); } catch(_){} }
+
 // ---------- AUTH ----------
 async function loginStudent(usernameOrEmail, password){
   // allow login by username or email — resolve username -> email via profiles
@@ -314,6 +359,7 @@ async function loginStudent(usernameOrEmail, password){
   }
   const { data, error } = await sb.auth.signInWithPassword({ email, password });
   if(error) return {ok:false, error:error.message};
+  _resetNavDepth();
   // check role isn't admin
   const { data: roles, error: roleError } = await sb.from('user_roles').select('role').eq('user_id', data.user.id);
   if(roleError) return {ok:false, error:'Signed in, but role lookup failed. Re-run sql/schema.sql, then try again.'};
@@ -328,6 +374,7 @@ async function loginAdmin(usernameOrEmail, password){
   if(!email.includes('@')) email = usernameOrEmail + '@naic.gov.ph'; // convention
   const { data, error } = await sb.auth.signInWithPassword({ email, password });
   if(error) return {ok:false, error:error.message};
+  _resetNavDepth();
   const { data: roles, error: roleError } = await sb.from('user_roles').select('role').eq('user_id', data.user.id);
   if(roleError) return {ok:false, error:'Signed in, but admin role lookup failed. Re-run sql/schema.sql, then try again.'};
   if(!(roles||[]).some(r=>r.role==='admin')){
@@ -405,6 +452,7 @@ async function logout(opts){
     if(!ok) return;
   }
   try { await sb.auth.signOut(); } catch(e){}
+  _resetNavDepth();
   window.location.href = _isInSubfolder() ? '../index.html' : 'index.html';
 }
 
