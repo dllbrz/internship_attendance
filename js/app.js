@@ -53,6 +53,9 @@ function profileIconHTML(user, size){
 }
 
 function renderSidebar(kind, active){
+  // The page is about to paint real content — make sure the loading layout
+  // override is removed so the sidebar/main grid applies.
+  if(typeof window.clearPageLoader === 'function') window.clearPageLoader();
   const items = kind==='student' ? [
     {group:'Main'},
     {icon:ICONS.dashboard,label:'Dashboard',href:'dashboard.html',key:'dashboard'},
