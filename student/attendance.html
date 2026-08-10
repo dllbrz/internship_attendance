@@ -69,7 +69,7 @@ async function render(){
         </div>
         <div class="table-wrap"><table><thead><tr><th>Date</th><th>Time In</th><th>Time Out</th><th>Hours</th><th>Status</th></tr></thead>
         <tbody>${list.length?list.map(r=>`<tr><td>${fmtDate(r.date)}</td><td>${fmt12(r.time_in)}</td><td>${fmt12(r.time_out)}</td><td>${r.hours||'—'}</td>
-        <td><span class="badge badge-${attendanceDisplay(r,user).key}">${attendanceDisplay(r,user).label}</span></td></tr>`).join(''):'<tr><td colspan="5" class="text-center text-muted" style="padding:24px">No records match this date.</td></tr>'}</tbody></table></div>
+        <td><span class="badge badge-${attendanceDisplay(r,user).key}">${attendanceDisplay(r,user).label}</span>${r.credit_type?`<div class="text-sm text-muted" style="margin-top:4px">Credited by admin${r.note?': '+r.note:''}</div>`:''}</td></tr>`).join(''):'<tr><td colspan="5" class="text-center text-muted" style="padding:24px">No records match this date.</td></tr>'}</tbody></table></div>
       </div>
     </main>`;
   startClock('#clockBox');
