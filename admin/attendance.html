@@ -26,13 +26,14 @@ async function render(){
     <main class="main">
       ${renderTopbar('Attendance', "Records for the selected date only. Late/Absent thresholds follow the Scanner schedule.",
         `<button class="btn btn-outline" onclick="refreshData()">Refresh</button>
+         <button class="btn btn-primary" onclick="openSchedule()">+ Add Schedule</button>
          <a class="btn-icon" href="archived.html#attendance" title="Open deleted records archive" aria-label="Open deleted records archive">${ICONS.file}</a>
          <button class="btn btn-outline" style="color:#c53030;border-color:#c53030" onclick="deleteForDate()">Delete all for this date</button>`)}
 
       <div class="card">
         <div class="filter-row" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
           <label class="text-sm" for="dateFilter" style="min-width:auto">Date:</label>
-          <input type="date" class="form-control" id="dateFilter" value="${CURRENT_DATE}" max="${todayStr()}" style="max-width:180px" onchange="changeDate(this.value)">
+          <input type="date" class="form-control" id="dateFilter" value="${CURRENT_DATE}" style="max-width:180px" onchange="changeDate(this.value)">
           <button class="btn btn-outline btn-sm" onclick="changeDate(todayStr())">Today</button>
           <label class="sr-only" for="search">Search interns</label>
           <input type="text" class="form-control" id="search" placeholder="Search name or ID…" style="flex:1;min-width:200px" oninput="onSearch(this.value)">
@@ -89,6 +90,47 @@ async function render(){
         <div class="modal-foot">
           <button class="btn btn-outline" onclick="closeModal('recModal')">Cancel</button>
           <button class="btn btn-primary" id="r_save" onclick="saveRecord()">Save Changes</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Add a scheduled / credited day for a selected intern -->
+    <div class="modal" id="schedModal">
+      <div class="modal-inner" style="max-width:520px">
+        <div class="modal-head">
+          <h3>Add Schedule for an Intern</h3>
+          <button class="close-x" onclick="closeModal('schedModal')" aria-label="Close dialog">×</button>
+        </div>
+        <div class="modal-body">
+          <p class="text-sm text-muted" style="margin-bottom:14px">
+            Use this to grant a rest day, reward, holiday or off-site day. The intern does not
+            need to scan — the hours below are still credited and the day shows as attended for
+            both the admin and the intern.
+          </p>
+          <div class="form-group">
+            <label for="s_student">Intern</label>
+            <select class="form-control" id="s_student" onchange="onSchedStudent()"></select>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label for="s_date">Date</label>
+              <input type="date" class="form-control" id="s_date"></div>
+            <div class="form-group"><label for="s_hours">Credited hours</label>
+              <input type="number" class="form-control" id="s_hours" min="0" max="24" step="0.25"></div>
+          </div>
+          <div class="form-group">
+            <label for="s_type">Schedule type</label>
+            <select class="form-control" id="s_type"></select>
+          </div>
+          <div class="form-group">
+            <label for="s_note">Reason / note (visible to the intern)</label>
+            <input type="text" class="form-control" id="s_note" maxlength="160" placeholder="e.g. Reward rest day for outstanding performance">
+          </div>
+          <p class="text-sm text-muted" id="s_hint" aria-live="polite"></p>
+          <div class="form-error" id="s_err" role="alert"></div>
+        </div>
+        <div class="modal-foot">
+          <button class="btn btn-outline" onclick="closeModal('schedModal')">Cancel</button>
+          <button class="btn btn-primary" id="s_save" onclick="saveSchedule()">Save Schedule</button>
         </div>
       </div>
     </div>`;
@@ -168,7 +210,7 @@ function drawRows(){
       <td><div class="cell-name">${profileIconHTML(r,30)}<span class="name-text">${escapeHtml(r.name)}</span>${r.archived?' <span class="pill gray">Archived</span>':''}</div></td>
       <td>${fmt12(r.time_in)}</td>
       <td>${fmt12(r.time_out)}</td>
-      <td><span class="badge badge-${r._disp.key}">${r._disp.label}</span></td>
+      <td><span class="badge badge-${r._disp.key}">${r._disp.label}</span>${r.credit_type?`<div class="text-sm text-muted" style="margin-top:4px">Credited${r.note?': '+escapeHtml(r.note):''}</div>`:''}</td>
       <td>${Number(r.hours||0).toFixed(2)}</td>
       <td style="text-align:right;white-space:nowrap">
         <button class="btn-icon" onclick="openRecord('${r.id}')" title="Edit record" aria-label="Edit record for ${escapeAttr(r.name)}">${ICONS.edit}</button>
@@ -216,6 +258,62 @@ async function saveRecord(){
 }
 
 /* ---------- deletion (soft delete → Archive) ---------- */
+/* ---------- add schedule / credited day ---------- */
+function openSchedule(){
+  const actives = (window.__DB__.students||[]).filter(s=>s.active !== false)
+    .sort((a,b)=>String(a.name).localeCompare(String(b.name)));
+  if(!actives.length){ toast('No active interns to schedule.','info'); return; }
+
+  document.getElementById('s_student').innerHTML =
+    actives.map(s=>`<option value="${escapeAttr(s.id)}">${escapeHtml(s.name)} — ${escapeHtml(s.id)}</option>`).join('');
+  document.getElementById('s_type').innerHTML =
+    CREDIT_TYPES.map(t=>`<option value="${t.value}">${t.label}</option>`).join('');
+  document.getElementById('s_date').value = CURRENT_DATE || todayStr();
+  document.getElementById('s_note').value = '';
+  document.getElementById('s_err').textContent = '';
+  onSchedStudent();
+  openModal('schedModal');
+}
+
+function onSchedStudent(){
+  const id = document.getElementById('s_student').value;
+  const s  = (window.__DB__.students||[]).find(x=>x.id===id);
+  document.getElementById('s_hours').value = defaultCreditHours(s);
+  document.getElementById('s_hint').textContent = s
+    ? `Default credit follows ${s.name}'s shift (${fmt12(s.expected_time_in)} – ${fmt12(s.expected_time_out)} minus break). You can change it.`
+    : '';
+}
+
+async function saveSchedule(){
+  const err = document.getElementById('s_err');
+  err.textContent = '';
+  const id    = document.getElementById('s_student').value;
+  const date  = document.getElementById('s_date').value;
+  const hours = document.getElementById('s_hours').value;
+  const type  = document.getElementById('s_type').value;
+  const note  = document.getElementById('s_note').value;
+  if(!date){ err.textContent = 'Pick the date of the schedule.'; return; }
+
+  const existing = (window.__DB__.attendance||[]).find(a=>a.student_id===id && a.date===date && !a.credit_type && a.time_in);
+  if(existing){
+    const ok = await confirmDelete(
+      `${id} already has a scanned record on ${fmtDate(date)}. Replacing it with a credited schedule will overwrite the scanned times. Continue?`,
+      'Replace existing record'
+    );
+    if(!ok) return;
+  }
+
+  const btn = document.getElementById('s_save');
+  btn.disabled = true; btn.textContent = 'Saving…';
+  const r = await addScheduledCredit(id, { date, credit_type:type, hours, note });
+  btn.disabled = false; btn.textContent = 'Save Schedule';
+  if(!r.ok){ err.textContent = r.error; return; }
+
+  closeModal('schedModal');
+  toast(`${CREDIT_LABELS[type]} saved for ${r.student.name} on ${fmtDate(date)}.`,'success');
+  await changeDate(date);
+}
+
 async function delRecord(id){
   const rec = DAY_ROWS.find(r=>r.id===id); if(!rec) return;
   const r = decorate(rec);
