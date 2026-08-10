@@ -920,7 +920,11 @@ function attendanceDisplay(rec, student){
   // Hours are credited even though the intern never scanned, so it always
   // counts as PRESENT and carries its own label.
   if(rec && rec.credit_type){
-    return { key:'present', label:CREDIT_LABELS[rec.credit_type] || 'Credited', tone:'green', credited:true };
+    const label = rec.credit_type === 'regular'
+      ? 'Present (manual)'
+      : (CREDIT_LABELS[rec.credit_type] || 'Credited');
+    return { key:'present', label, tone:'green', credited:true,
+             worked: CREDIT_WORKED_TYPES.indexOf(rec.credit_type) >= 0 };
   }
   if(!rec || !rec.time_in) return { key:'absent', label:'Absent', tone:'red' };
   const late = rec.status === 'late';
@@ -1170,6 +1174,7 @@ async function purgeAllDeletedAttendance(){
 //   and the intern see it everywhere attendance is displayed.
 // ============================================================================
 const CREDIT_TYPES = [
+  { value:'regular',  label:'Regular day (manual entry)' },
   { value:'reward',   label:'Reward rest day' },
   { value:'rest_day', label:'Scheduled rest day' },
   { value:'excused',  label:'Excused (credited)' },
@@ -1178,6 +1183,8 @@ const CREDIT_TYPES = [
   { value:'makeup',   label:'Make-up duty' }
 ];
 const CREDIT_LABELS = CREDIT_TYPES.reduce((m,t)=>(m[t.value]=t.label, m),{});
+// Types the intern actually reported for duty (shown as a plain "Present" day).
+const CREDIT_WORKED_TYPES = ['regular','makeup','offsite'];
 
 // Default credited hours for a student = shift length minus their break.
 function defaultCreditHours(student){
@@ -1205,8 +1212,8 @@ async function addScheduledCredit(studentInternId, opts){
   const row = {
     student_id : s.auth_id,
     date       : opts.date,
-    time_in    : (s.expected_time_in  || sch.start_time || '08:00'),
-    time_out   : (s.expected_time_out || sch.end_time   || '17:00'),
+    time_in    : (opts.time_in  || s.expected_time_in  || sch.start_time || '08:00'),
+    time_out   : (opts.time_out || s.expected_time_out || sch.end_time   || '17:00'),
     hours      : +hours.toFixed(2),
     status     : 'present',
     verified   : true,
