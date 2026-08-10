@@ -144,6 +144,8 @@ function _mapAttendance(a, internIdMap){
     hours: Number(a.hours || 0),
     status: a.status,
     verified: a.verified,
+    credit_type: a.credit_type || null,
+    note: a.note || null,
     deleted_at: a.deleted_at || null
   };
 }
@@ -914,6 +916,12 @@ function shiftHasEnded(rec, student){
 // tab filtering/counting, label+tone for display.
 function attendanceDisplay(rec, student){
   if(!student && rec) student = window.__DB__.students.find(s=>s.id===rec.student_id);
+  // Admin-granted scheduled/credited day (rest day, reward, holiday, ...).
+  // Hours are credited even though the intern never scanned, so it always
+  // counts as PRESENT and carries its own label.
+  if(rec && rec.credit_type){
+    return { key:'present', label:CREDIT_LABELS[rec.credit_type] || 'Credited', tone:'green', credited:true };
+  }
   if(!rec || !rec.time_in) return { key:'absent', label:'Absent', tone:'red' };
   const late = rec.status === 'late';
   if(rec.status === 'absent') return { key:'absent', label:'Absent', tone:'red' };
@@ -1073,6 +1081,7 @@ async function unarchiveStudent(studentInternId){
 
 // Only students that ACTUALLY have a record on the given date.
 async function fetchAttendanceForDate(dateStr){
+  // (see CREDITED SCHEDULE block below for admin-granted rest/reward days)
   const { data, error } = await sb.from('attendance')
     .select('*').eq('date', dateStr).is('deleted_at', null);
   if(error) return { ok:false, error:error.message, rows:[] };
@@ -1089,14 +1098,19 @@ async function updateAttendanceRecord(recordId, patch){
   if('time_out' in patch) upd.time_out = patch.time_out || null;
   if('status'   in patch) upd.status   = patch.status;
   if('verified' in patch) upd.verified = !!patch.verified;
+  if('credit_type' in patch) upd.credit_type = patch.credit_type || null;
+  if('note'     in patch) upd.note = patch.note || null;
+  if('hours'    in patch && patch.hours != null) upd.hours = Number(patch.hours);
 
   if(upd.time_in && upd.time_out){
+   if(!('hours' in upd)){
     const rec = window.__DB__.attendance.find(a=>a.id===recordId);
     const st  = rec ? window.__DB__.students.find(s=>s.id===rec.student_id) : null;
     const mins = minutesOf(upd.time_out) - minutesOf(upd.time_in) - breakMinutesFor(st);
     upd.hours = +Math.max(0, mins/60).toFixed(2);
+   }
   } else if('time_out' in patch && !upd.time_out){
-    upd.hours = 0;
+    if(!('hours' in upd)) upd.hours = 0;
   }
 
   const { data, error } = await sb.from('attendance').update(upd).eq('id', recordId).select().single();
@@ -1146,6 +1160,78 @@ async function purgeAllDeletedAttendance(){
   const { error } = await sb.from('attendance').delete().not('deleted_at','is',null);
   if(error) return { ok:false, error:error.message };
   return { ok:true };
+}
+
+// ============================================================================
+// CREDITED SCHEDULE (admin grants a day with credited hours)
+//   e.g. a reward rest day: the intern does not report for duty but the day
+//   is still counted and the hours are added to the rendered total.
+//   Stored as a normal attendance row + credit_type/note so BOTH the admin
+//   and the intern see it everywhere attendance is displayed.
+// ============================================================================
+const CREDIT_TYPES = [
+  { value:'reward',   label:'Reward rest day' },
+  { value:'rest_day', label:'Scheduled rest day' },
+  { value:'excused',  label:'Excused (credited)' },
+  { value:'holiday',  label:'Holiday' },
+  { value:'offsite',  label:'Off-site / official business' },
+  { value:'makeup',   label:'Make-up duty' }
+];
+const CREDIT_LABELS = CREDIT_TYPES.reduce((m,t)=>(m[t.value]=t.label, m),{});
+
+// Default credited hours for a student = shift length minus their break.
+function defaultCreditHours(student){
+  const sch = getOfficeSchedule();
+  const inM  = minutesOf((student && student.expected_time_in)  || sch.start_time);
+  const outM = minutesOf((student && student.expected_time_out) || sch.end_time);
+  if(inM == null || outM == null) return 8;
+  return +Math.max(0, (outM - inM - breakMinutesFor(student))/60).toFixed(2);
+}
+
+/**
+ * Create (or replace) a credited schedule entry for one intern.
+ * @param {string} studentInternId  OJT-YYYY-XXX
+ * @param {{date:string, credit_type:string, hours:number, note?:string}} opts
+ */
+async function addScheduledCredit(studentInternId, opts){
+  const s = window.__DB__.students.find(x=>x.id===studentInternId);
+  if(!s) return { ok:false, error:'Intern not found.' };
+  if(!opts || !opts.date) return { ok:false, error:'Pick a date for the schedule.' };
+  if(!CREDIT_LABELS[opts.credit_type]) return { ok:false, error:'Pick a schedule type.' };
+  const hours = Number(opts.hours);
+  if(isNaN(hours) || hours < 0 || hours > 24) return { ok:false, error:'Credited hours must be between 0 and 24.' };
+
+  const sch = getOfficeSchedule();
+  const row = {
+    student_id : s.auth_id,
+    date       : opts.date,
+    time_in    : (s.expected_time_in  || sch.start_time || '08:00'),
+    time_out   : (s.expected_time_out || sch.end_time   || '17:00'),
+    hours      : +hours.toFixed(2),
+    status     : 'present',
+    verified   : true,
+    credit_type: opts.credit_type,
+    note       : (opts.note || '').trim() || null,
+    deleted_at : null
+  };
+  try {
+    const { data:{ user } } = await sb.auth.getUser();
+    if(user) row.credited_by = user.id;
+  } catch(_){}
+
+  const { data, error } = await sb.from('attendance')
+    .upsert(row, { onConflict:'student_id,date' }).select().single();
+  if(error){
+    const msg = /credit_type|note|credited_by/i.test(error.message)
+      ? 'The database is missing the credited-schedule columns. Run sql/migration-credited-schedule.sql in Supabase.'
+      : error.message;
+    return { ok:false, error: msg };
+  }
+  const internIdMap = new Map(window.__DB__.students.map(x=>[x.auth_id, x.id]));
+  const mapped = _mapAttendance(data, internIdMap);
+  const idx = window.__DB__.attendance.findIndex(a=>a.id===mapped.id);
+  if(idx>=0) window.__DB__.attendance[idx] = mapped; else window.__DB__.attendance.unshift(mapped);
+  return { ok:true, record:mapped, student:s };
 }
 
 // ============================================================================
