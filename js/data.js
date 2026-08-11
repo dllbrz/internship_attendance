@@ -914,14 +914,18 @@ function shiftHasEnded(rec, student){
 
 // Returns { key:'present'|'late'|'absent', label, tone } — key is used for
 // tab filtering/counting, label+tone for display.
-function attendanceDisplay(rec, student){
+function attendanceDisplay(rec, student, opts){
+  // opts.admin === true  -> admin portal: manual/credited bookkeeping is shown.
+  // default (intern view) -> a manually recorded day looks exactly like a normal
+  // present day; the intern never sees that it was typed in by an admin.
+  const forAdmin = !!(opts && opts.admin);
   if(!student && rec) student = window.__DB__.students.find(s=>s.id===rec.student_id);
   // Admin-granted scheduled/credited day (rest day, reward, holiday, ...).
   // Hours are credited even though the intern never scanned, so it always
   // counts as PRESENT and carries its own label.
   if(rec && rec.credit_type){
     const label = rec.credit_type === 'regular'
-      ? 'Present (manual)'
+      ? (forAdmin ? 'Present (manual)' : 'Present')
       : (CREDIT_LABELS[rec.credit_type] || 'Credited');
     return { key:'present', label, tone:'green', credited:true,
              worked: CREDIT_WORKED_TYPES.indexOf(rec.credit_type) >= 0 };
@@ -1185,6 +1189,28 @@ const CREDIT_TYPES = [
 const CREDIT_LABELS = CREDIT_TYPES.reduce((m,t)=>(m[t.value]=t.label, m),{});
 // Types the intern actually reported for duty (shown as a plain "Present" day).
 const CREDIT_WORKED_TYPES = ['regular','makeup','offsite'];
+
+/**
+ * Read the intern's saved shift straight from their profile row (the same data
+ * shown on the admin Students page) and refresh the local cache, so any default
+ * built from it can never fall back to a stale/office-wide schedule.
+ * @param {string} studentInternId OJT-YYYY-XXX
+ */
+async function fetchStudentSchedule(studentInternId){
+  const s = (window.__DB__.students||[]).find(x=>x.id===studentInternId);
+  if(!s) return null;
+  try {
+    const { data, error } = await sb.from('profiles')
+      .select('expected_time_in,expected_time_out,break_minutes')
+      .eq('id', s.auth_id).maybeSingle();
+    if(!error && data){
+      if(data.expected_time_in)  s.expected_time_in  = String(data.expected_time_in).slice(0,5);
+      if(data.expected_time_out) s.expected_time_out = String(data.expected_time_out).slice(0,5);
+      if(data.break_minutes != null) s.break_minutes = Number(data.break_minutes);
+    }
+  } catch(_){}
+  return s;
+}
 
 // Default credited hours for a student = shift length minus their break.
 function defaultCreditHours(student){
