@@ -140,7 +140,7 @@ function applyFilters(){
       <td>${fmt12(r.time_in)}</td>
       <td>${fmt12(r.time_out)}</td>
       <td>${r.hours || '—'}</td>
-      <td><span class="badge badge-${r.status}">${r.status.charAt(0).toUpperCase()+r.status.slice(1)}</span></td>
+      <td><span class="pill ${r.status==='present'?'green':r.status==='late'?'yellow':'red'}">${r.status.charAt(0).toUpperCase()+r.status.slice(1)}</span></td>
     </tr>`).join('') || '<tr><td colspan="7" style="text-align:center;color:#888;padding:16px">No records match the selected filters.</td></tr>';
 
 }
