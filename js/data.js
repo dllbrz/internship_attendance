@@ -926,7 +926,9 @@ function attendanceDisplay(rec, student, opts){
   if(rec && rec.credit_type){
     const label = rec.credit_type === 'regular'
       ? (forAdmin ? 'Present (manual)' : 'Present')
-      : (CREDIT_LABELS[rec.credit_type] || 'Credited');
+      : (rec.credit_type === 'other'
+          ? 'Credited'
+          : (CREDIT_LABELS[rec.credit_type] || 'Credited'));
     return { key:'present', label, tone:'green', credited:true,
              worked: CREDIT_WORKED_TYPES.indexOf(rec.credit_type) >= 0 };
   }
@@ -1220,7 +1222,8 @@ const CREDIT_TYPES = [
   { value:'excused',  label:'Excused (credited)' },
   { value:'holiday',  label:'Holiday' },
   { value:'offsite',  label:'Off-site / official business' },
-  { value:'makeup',   label:'Make-up duty' }
+  { value:'makeup',   label:'Make-up duty' },
+  { value:'other',    label:'Other (specify reason)' }
 ];
 const CREDIT_LABELS = CREDIT_TYPES.reduce((m,t)=>(m[t.value]=t.label, m),{});
 // Types the intern actually reported for duty (shown as a plain "Present" day).
