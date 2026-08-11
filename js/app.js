@@ -57,15 +57,17 @@ function renderSidebar(kind, active){
   // override is removed so the sidebar/main grid applies.
   if(typeof window.clearPageLoader === 'function') window.clearPageLoader();
   const items = kind==='student' ? [
+    {group:'Account'},
+    {icon:ICONS.user,label:'Profile',href:'profile.html',key:'profile'},
+    {icon:ICONS.folder,label:'My Requirements',href:'requirements.html',key:'requirements'},
     {group:'Main'},
     {icon:ICONS.dashboard,label:'Dashboard',href:'dashboard.html',key:'dashboard'},
     {icon:ICONS.clock,label:'Attendance',href:'attendance.html',key:'attendance'},
     {icon:ICONS.report,label:'Reports',href:'reports.html',key:'reports'},
     {icon:ICONS.bell,label:'Notifications',href:'notifications.html',key:'notifications'},
-    {group:'Account'},
-    {icon:ICONS.user,label:'Profile',href:'profile.html',key:'profile'},
-    {icon:ICONS.folder,label:'My Requirements',href:'requirements.html',key:'requirements'},
   ] : [
+    {group:'Account'},
+    {icon:ICONS.settings,label:'Account',href:'account.html',key:'account'},
     {group:'Main'},
     {icon:ICONS.dashboard,label:'Dashboard',href:'dashboard.html',key:'dashboard'},
     {icon:ICONS.student,label:'Students',href:'students.html',key:'students'},
@@ -74,8 +76,6 @@ function renderSidebar(kind, active){
     {icon:ICONS.archive,label:'Archived',href:'archived.html',key:'archived'},
     {icon:ICONS.report,label:'Reports',href:'reports.html',key:'reports'},
     {icon:ICONS.megaphone,label:'Announcements',href:'announcements.html',key:'announcements'},
-    {group:'Account'},
-    {icon:ICONS.settings,label:'Account',href:'account.html',key:'account'},
   ];
 
   const user = window.__DB__.currentUser || { name:'User', id:'', avatar:null };
