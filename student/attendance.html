@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Attendance — Intern · Naic OJT</title>
+<title>Profile — Intern · Engineering Office</title>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="../css/styles.css">
 </head>
@@ -12,86 +12,286 @@
 <script src="../js/supabase-config.js"></script>
 <script src="../js/data.js"></script>
 <script src="../js/app.js"></script>
+<script src="../js/image-crop.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/davidshimjs/qrcodejs/qrcode.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.1/jspdf.plugin.autotable.min.js"></script>
 <script>
-// The search box and the date picker share ONE display format (e.g. "Jan 05, 2026").
-// Picking a date fills the search box with that same formatted string.
-let dateQ='';
+let ME = null;
 
-function matchesDate(iso, q){
-  const term = String(q).toLowerCase().trim();
-  if(!term) return true;
-  return String(iso).toLowerCase().includes(term) ||
-         fmtDate(iso).toLowerCase().includes(term);
-}
-// Reverse-map a formatted query back to YYYY-MM-DD so the picker stays in sync.
-function isoOf(q){
-  if(!q) return '';
-  if(/^\d{4}-\d{2}-\d{2}$/.test(q)) return q;
-  const d = new Date(q);
-  return isNaN(d) ? '' : d.toISOString().slice(0,10);
-}
 async function render(){
-  const user = await requireStudent(); if(!user) return;
-  const today = getTodayAttendance(user.id);
-  const all = studentAttendance(user.id);
-  const list = dateQ ? all.filter(a=>matchesDate(a.date, dateQ)) : all;
-  const total = totalHours(user.id);
-  const disp = new Map(all.map(a=>[a, attendanceDisplay(a, user)]));
-  const lateCount = all.filter(a=>disp.get(a).key==='late').length;
-  const presentCount = all.filter(a=>disp.get(a).key==='present').length;
-  const todayDisp = today ? attendanceDisplay(today, user) : null;
-
-  document.getElementById('shell').innerHTML = renderSidebar('student','attendance') + `
+  const u = await requireStudent(); if(!u) return;
+  // If a pending email change was just confirmed, mirror it into the profile.
+  try { const sync = await syncOwnEmailFromAuth(); if(sync && sync.changed) u.email = (window.__DB__.currentUser||{}).email || u.email; } catch(_){}
+  ME = u;
+  document.getElementById('shell').innerHTML = renderSidebar('student','profile') + `
     <main class="main">
-      ${renderTopbar('Attendance','Time in, time out, and review your history.')}
-      <div class="stat-grid">
-        <div class="stat-card"><div><div class="stat-label">Today</div>
-          <div class="stat-value">${todayDisp?todayDisp.label.toUpperCase():'NOT IN'}</div>
-          <div class="stat-meta">${fmtDate(todayStr())}</div></div><div class="stat-icon">${STAT_ICONS.status}</div></div>
-        <div class="stat-card green"><div><div class="stat-label">Total Rendered</div><div class="stat-value">${total}</div><div class="stat-meta">hours</div></div><div class="stat-icon">${STAT_ICONS.hours}</div></div>
-        <div class="stat-card"><div><div class="stat-label">Present Days</div><div class="stat-value">${presentCount}</div></div><div class="stat-icon">${STAT_ICONS.present}</div></div>
-        <div class="stat-card yellow"><div><div class="stat-label">Late Records</div><div class="stat-value">${lateCount}</div></div><div class="stat-icon">${STAT_ICONS.late}</div></div>
-      </div>
-
-
-      <div class="card">
-        <div class="card-head">
-          <div><div class="card-title">Attendance History</div><div class="card-subtitle">${list.length} of ${all.length} record(s)</div></div>
-          <form class="flex gap-2" style="flex-wrap:wrap" id="searchForm" onsubmit="return false" novalidate>
-            <label class="sr-only" for="dateSearch">Search by date</label>
-            <input class="form-control" id="dateSearch" style="width:210px" placeholder="Search date (e.g. ${fmtDate(todayStr())})">
-            <label class="sr-only" for="datePick">Pick a date</label>
-            <input class="form-control" id="datePick" type="date" style="width:170px" value="${isoOf(dateQ)}">
-            ${dateQ?`<button type="button" class="btn btn-ghost btn-sm" onclick="dateQ='';render()">Clear</button>`:''}
-          </form>
+      ${renderTopbar('My Profile','View and edit your personal information, adviser, and requirements.')}
+      <div class="card-grid-2">
+        <div class="card text-center">
+          <div class="avatar" style="width:140px;height:140px;font-size:42px;margin:0 auto 12px;overflow:hidden;border-radius:50%">
+            ${u.avatar ? `<img src="${u.avatar}" alt="Profile picture" style="width:100%;height:100%;object-fit:cover">` : (u.name||'U').split(' ').map(x=>x[0]).slice(0,2).join('').toUpperCase()}
+          </div>
+          <h3 style="color:var(--blue-900);margin-bottom:2px">${u.name}</h3>
+          <div class="text-muted text-sm">${u.id}</div>
+          <div class="text-sm" style="font-weight:600;color:var(--blue-800);margin-top:2px">
+            Diploma in Information Technology
+          </div>
+          <div class="mt-4" style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
+            <button class="btn btn-outline btn-sm" onclick="openModal('picModal')">Change Photo</button>
+            <button class="btn btn-primary btn-sm" onclick="openEdit()">Edit Profile</button>
+            <button class="btn btn-yellow btn-sm" onclick="generateTimeCard()">Generate Time Card</button>
+          </div>
+          <hr style="margin:20px 0;border:none;border-top:1px solid var(--gray-200)">
+          <div style="text-align:left">
+            <div class="text-muted text-sm">Required Hours</div><div style="font-weight:700;color:var(--blue-800)">${u.required_hours} hrs</div>
+            <div class="text-muted text-sm mt-2">OJT Period</div><div style="font-weight:600">${fmtDate(u.start_date)} – ${fmtDate(u.end_date)}</div>
+            <div class="text-muted text-sm mt-2">School</div><div style="font-weight:600">${u.school||'—'}</div>
+            <div class="text-muted text-sm mt-2">Course</div><div style="font-weight:600">${u.course||'—'}</div>
+            <div class="text-muted text-sm mt-2">OJT Adviser</div><div style="font-weight:600">${u.adviser_name||'—'}</div>
+            <div class="text-muted text-sm">Adviser Contact</div><div style="font-weight:600">${u.adviser_contact||'—'}</div>
+          </div>
+          <hr style="margin:20px 0;border:none;border-top:1px solid var(--gray-200)">
+          <div class="qr-display">
+            <div class="card-title" style="margin-bottom:8px">My QR Code</div>
+            <div id="qr" style="display:inline-block"></div>
+            <div style="font-weight:700;color:var(--blue-800);margin-top:6px">${u.id}</div>
+            <div style="margin-top:10px">
+              <button class="btn btn-primary btn-sm" onclick="downloadQR('${u.id}')">Download QR Code</button>
+            </div>
+          </div>
         </div>
-        <div class="table-wrap"><table><thead><tr><th>Date</th><th>Time In</th><th>Time Out</th><th>Hours</th><th>Status</th></tr></thead>
-        <tbody>${list.length?list.map(r=>`<tr><td>${fmtDate(r.date)}</td><td>${fmt12(r.time_in)}</td><td>${fmt12(r.time_out)}</td><td>${r.hours||'—'}</td>
-        <td>${(d=>`<span class="pill ${d.tone}">${escapeHtml(d.label)}</span>`)(attendanceDisplay(r,user))}${(r.credit_type && r.credit_type!=='regular')?`<div class="text-sm text-muted" style="margin-top:4px">Credited by admin${r.note?': '+escapeHtml(r.note):''}</div>`:''}</td></tr>`).join(''):'<tr><td colspan="5" class="text-center text-muted" style="padding:24px">No records match this date.</td></tr>'}</tbody></table></div>
-      </div>
-    </main>`;
-  startClock('#clockBox');
 
-  const ds=document.getElementById('dateSearch');
-  ds.value=dateQ;
-  const sf=document.getElementById('searchForm');
-  if(sf) sf.addEventListener('submit',(e)=>{ e.preventDefault(); e.stopPropagation(); });
-  ds.addEventListener('keydown',(e)=>{ if(e.key==='Enter'){ e.preventDefault(); e.stopPropagation(); } });
-  ds.addEventListener('input',(e)=>{dateQ=e.target.value.trim();render();});
-  if(dateQ){ds.focus();ds.setSelectionRange(ds.value.length,ds.value.length);}
-  // Normalise the picked date into the SAME display format as the table + search box.
-  document.getElementById('datePick').addEventListener('change',(e)=>{
-    dateQ = e.target.value ? fmtDate(e.target.value) : '';
-    render();
-  });
+        <div class="card">
+          <div class="card-title">Personal Information</div>
+          <div class="text-muted text-sm">Email</div><div style="font-weight:600">${u.email||'—'}</div>
+          <div class="text-muted text-sm mt-2">Phone</div><div style="font-weight:600">${u.phone||'—'}</div>
+          <div class="text-muted text-sm mt-2">Address</div><div style="font-weight:600">${u.address||'—'}</div>
+
+          <hr style="margin:18px 0;border:none;border-top:1px solid var(--gray-200)">
+          <div class="card-title">Progress</div>
+          <div style="font-size:14px;color:var(--gray-700);margin-bottom:6px">
+            ${totalHours(u.id)} / ${u.required_hours} hours rendered
+          </div>
+          <div style="height:10px;background:#eef2f7;border-radius:6px;overflow:hidden">
+            <div style="height:100%;background:linear-gradient(90deg,#0d2b6b,#123a8a);width:${Math.min(100,(totalHours(u.id)/u.required_hours*100)).toFixed(1)}%"></div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- Profile picture options modal -->
+    <div class="modal" id="picModal" role="dialog" aria-modal="true" aria-label="Profile picture options">
+      <div class="modal-inner" style="max-width:400px">
+        <div class="modal-head"><h3>Profile Picture</h3><button class="close-x" aria-label="Close" onclick="closeModal('picModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="view-menu">
+            <input type="file" id="picFile" accept="image/*" style="display:none" onchange="uploadPic(event)">
+            <button type="button" onclick="viewPhoto()" ${u.avatar ? '' : 'disabled'}>View Photo</button>
+            <button type="button" onclick="document.getElementById('picFile').click()">Change Photo</button>
+            <button type="button" class="danger" onclick="removePic()" ${u.avatar ? '' : 'disabled'}>Delete Photo</button>
+          </div>
+          <p class="text-muted text-sm mt-3">Photos should be a clear headshot. JPG or PNG, under 5 MB works best.</p>
+        </div>
+        <div class="modal-foot"><button class="btn btn-outline" onclick="closeModal('picModal')">Close</button></div>
+      </div>
+    </div>
+
+    <!-- Photo viewer modal -->
+    <div class="modal" id="viewPicModal" role="dialog" aria-modal="true" aria-label="Profile photo">
+      <div class="modal-inner" style="max-width:520px">
+        <div class="modal-head"><h3>My Photo</h3><button class="close-x" aria-label="Close" onclick="closeModal('viewPicModal')">&times;</button></div>
+        <div class="modal-body">
+          <img id="picPreview" class="photo-preview" alt="Your profile photo" src="">
+        </div>
+        <div class="modal-foot">
+          <button class="btn btn-outline" onclick="closeModal('viewPicModal')">Close</button>
+          <button class="btn btn-primary" onclick="closeModal('viewPicModal');openModal('picModal')">Photo Options</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Edit profile modal -->
+    <div class="modal" id="editModal" role="dialog" aria-modal="true" aria-label="Edit my profile">
+      <div class="modal-inner" style="max-width:520px">
+        <div class="modal-head"><h3>Edit My Profile</h3><button class="close-x" aria-label="Close" onclick="closeModal('editModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-group"><label for="f_name">Full Name</label><input class="form-control" id="f_name"></div>
+          <div class="form-group">
+            <label for="f_email">Email Address</label>
+            <input class="form-control" type="email" id="f_email" autocomplete="email" aria-describedby="f_email_hint">
+            <small class="text-muted text-sm" id="f_email_hint">Changing this sends a confirmation link to the new address. Your email only changes after you click that link — keep using your current email to sign in until then.</small>
+          </div>
+          <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <div class="form-group"><label>Phone</label><input class="form-control" id="f_phone"></div>
+            <div class="form-group"><label>School</label><input class="form-control" id="f_school"></div>
+          </div>
+          <div class="form-group"><label>Course</label><input class="form-control" id="f_course"></div>
+          <div class="form-group"><label>Address</label><textarea class="form-control" id="f_addr" rows="2"></textarea></div>
+          <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <div class="form-group"><label>Adviser Name</label><input class="form-control" id="f_adv"></div>
+            <div class="form-group"><label>Adviser Contact</label><input class="form-control" id="f_advc"></div>
+          </div>
+          <div class="form-error" id="f_err"></div>
+        </div>
+        <div class="modal-foot">
+          <button class="btn btn-outline" onclick="closeModal('editModal')">Cancel</button>
+          <button class="btn btn-primary" onclick="saveProfile()">Save Changes</button>
+        </div>
+      </div>
+    </div>`;
+  startClock('#clockBox');
+  new QRCode(document.getElementById('qr'), { text:u.qr_token, width:160, height:160, colorDark:'#0d2b6b', colorLight:'#fff' });
 }
-async function doIn(){ const u=await requireStudent(); const r=await timeIn(u.id); if(!r.ok){toast(r.error,'error');return;} toast('Timed in at '+fmt12(r.time)+'!','success'); render();}
-async function doOut(){ const u=await requireStudent(); const r=await timeOut(u.id); if(!r.ok){toast(r.error,'error');return;} toast('Timed out at '+fmt12(r.time)+' · +'+r.hours+' hrs','success'); render();}
-async function csv(){ const u=await requireStudent(); const rows=[['Date','Time In','Time Out','Hours','Status']]; studentAttendance(u.id).forEach(r=>rows.push([r.date,r.time_in||'',r.time_out||'',r.hours||0,r.status])); exportCSV(u.id+'-attendance.csv',rows);}
-async function pdf(){ const u=await requireStudent(); const rows=studentAttendance(u.id).map(r=>[fmtDate(r.date),fmt12(r.time_in),fmt12(r.time_out),r.hours||'—',r.status.toUpperCase()]); exportPDF(u.id+'-attendance.pdf','Attendance History — '+u.name,['Date','Time In','Time Out','Hours','Status'],rows);}
+function viewPhoto(){
+  const src = (ME && (ME.avatar || ME.avatar_url)) || '';
+  if(!src){ toast('No photo uploaded yet.','info'); return; }
+  const img = document.getElementById('picPreview');
+  img.src = src;
+  closeModal('picModal');
+  openModal('viewPicModal');
+}
+function openEdit(){
+  document.getElementById('f_name').value = ME.name || '';
+  document.getElementById('f_email').value = ME.email || '';
+  document.getElementById('f_phone').value = ME.phone || '';
+  document.getElementById('f_school').value = ME.school || '';
+  document.getElementById('f_course').value = ME.course || '';
+  document.getElementById('f_addr').value = ME.address || '';
+  document.getElementById('f_adv').value = ME.adviser_name || '';
+  document.getElementById('f_advc').value = ME.adviser_contact || '';
+  openModal('editModal');
+}
+async function saveProfile(){
+  const patch = {
+    full_name: document.getElementById('f_name').value.trim(),
+    phone: document.getElementById('f_phone').value.trim(),
+    school: document.getElementById('f_school').value.trim(),
+    course: document.getElementById('f_course').value.trim(),
+    address: document.getElementById('f_addr').value.trim(),
+    adviser_name: document.getElementById('f_adv').value.trim(),
+    adviser_contact: document.getElementById('f_advc').value.trim(),
+  };
+  const err = document.getElementById('f_err');
+  err.textContent = '';
+  if(!patch.full_name){ err.textContent = 'Full name is required.'; return; }
+  const newEmail = (document.getElementById('f_email').value || '').trim().toLowerCase();
+  const curEmail = (ME.email || '').trim().toLowerCase();
+  if(newEmail && newEmail !== curEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newEmail)){
+    err.textContent = 'Enter a valid email address.'; return;
+  }
+  const r = await updateOwnProfile(patch);
+  if(!r.ok){ err.textContent = r.error; return; }
+  let emailMsg = '';
+  if(newEmail && newEmail !== curEmail){
+    const e2 = await updateOwnEmail(newEmail);
+    if(!e2.ok){
+      closeModal('editModal');
+      toast('Profile saved, but the email change failed: ' + e2.error, 'error');
+      render(); return;
+    }
+    emailMsg = ' Check ' + newEmail + ' for the confirmation link to finish the email change.';
+  }
+  closeModal('editModal'); toast('Profile updated.' + emailMsg,'success'); render();
+}
+function downloadQR(filename){
+  const holder = document.getElementById('qr');
+  if(!holder){ toast('QR not ready yet.','error'); return; }
+  const canvas = holder.querySelector('canvas');
+  const img = holder.querySelector('img');
+  let dataUrl = canvas ? canvas.toDataURL('image/png') : (img ? img.src : null);
+  if(!dataUrl){ toast('QR not ready yet.','error'); return; }
+  const a = document.createElement('a');
+  a.href = dataUrl; a.download = (filename||'qr-code')+'.png';
+  document.body.appendChild(a); a.click(); a.remove();
+  toast('QR code downloaded.','success');
+}
+async function uploadPic(e){
+  const input = e.target;
+  const f = input.files[0];
+  // reset so re-selecting the same file re-triggers change
+  try { input.value = ''; } catch(_){}
+  if(!f) return;
+  if(f.size > 15*1024*1024){ toast('Image too large (max 15 MB before cropping).','error'); return; }
+  let blob;
+  try {
+    blob = await window.openImageCropper(f, {
+      aspectRatio: 1, outputSize: 512, filename: 'avatar.png', mimeType: 'image/png'
+    });
+  } catch(err){
+    // user cancelled — silent
+    return;
+  }
+  // give the blob a filename so uploadAvatar can derive extension
+  const cropped = new File([blob], 'avatar.png', { type: blob.type || 'image/png' });
+  toast('Uploading…','info');
+  const r = await uploadAvatar(cropped);
+  if(!r.ok){ toast(r.error,'error'); return; }
+  closeModal('picModal');
+  toast('Photo updated.','success'); render();
+}
+async function removePic(){
+  if(!confirm('Delete your profile photo? This will restore the default avatar.')) return;
+  const r = await deleteOwnAvatar();
+  if(!r.ok){ toast(r.error,'error'); return; }
+  closeModal('picModal');
+  toast('Photo removed.','success'); render();
+}
+
+// ---------- PRINTABLE TIME CARD (compact vertical, half-Letter) ----------
+function generateTimeCard(){
+  const u = ME; if(!u){ toast('Not ready','error'); return; }
+  if(!window.jspdf || !window.jspdf.jsPDF){ toast('PDF library still loading. Try again.','error'); return; }
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit:'pt', format:[396, 612] }); // 5.5 x 8.5 in
+  const W = doc.internal.pageSize.getWidth();
+  const H = doc.internal.pageSize.getHeight();
+
+  doc.setFillColor(10,31,68); doc.rect(0,0,W,52,'F');
+  doc.setTextColor(253,194,43); doc.setFontSize(13); doc.text('OFFICIAL TIME CARD', 20, 22);
+  doc.setTextColor(255,255,255); doc.setFontSize(8.5);
+  doc.text('Municipal Engineering Office · OJT Program', 20, 38);
+
+  doc.setTextColor(20,20,20); doc.setFontSize(9);
+  let y = 72;
+  const row = (label,value)=>{ doc.setFont(undefined,'bold'); doc.text(label,20,y);
+    doc.setFont(undefined,'normal'); doc.text(String(value||'—'),120,y,{maxWidth:W-140}); y+=14; };
+  row('Intern Name:',u.name); row('Intern ID:',u.id); row('School:',u.school);
+  row('Course:',u.course); row('OJT Adviser:',u.adviser_name);
+  row('OJT Period:',`${fmtDate(u.start_date)} — ${fmtDate(u.end_date)}`);
+  row('Required Hours:',`${u.required_hours} hrs`);
+
+  const list = studentAttendance(u.id).slice().reverse();
+  const rendered = totalHours(u.id);
+  const present = list.filter(r=>r.status==='present').length;
+  const late = list.filter(r=>r.status==='late').length;
+  const absent = list.filter(r=>r.status==='absent').length;
+
+  y+=4; doc.setDrawColor(210,215,225); doc.line(20,y,W-20,y); y+=12;
+  doc.setFont(undefined,'bold'); doc.text('SUMMARY',20,y); y+=12; doc.setFont(undefined,'normal');
+  doc.text(`Hours Rendered: ${rendered} / ${u.required_hours}`,20,y); y+=12;
+  doc.text(`Present: ${present}    Late: ${late}    Absent: ${absent}`,20,y);
+
+  const body = list.map(r=>[fmtDate(r.date),fmt12(r.time_in)||'—',fmt12(r.time_out)||'—',
+    Number(r.hours||0).toFixed(2),(r.status||'').toUpperCase()]);
+  doc.autoTable({ startY:y+10, head:[['Date','In','Out','Hrs','Status']],
+    body: body.length?body:[['—','—','—','—','No records']], theme:'grid',
+    margin:{left:20,right:20},
+    headStyles:{fillColor:[13,43,107],textColor:255,fontSize:8,halign:'center'},
+    styles:{fontSize:7.5,cellPadding:3,halign:'center'},
+    columnStyles:{0:{halign:'left'}}, alternateRowStyles:{fillColor:[242,247,255]} });
+
+  const sigY = Math.min(H-60, (doc.lastAutoTable?doc.lastAutoTable.finalY:y)+34);
+  doc.setFontSize(8); doc.setTextColor(20,20,20);
+  doc.line(30,sigY,170,sigY); doc.line(W-170,sigY,W-30,sigY);
+  doc.text('Intern Signature',65,sigY+12); doc.text('Adviser Signature',W-140,sigY+12);
+  doc.setFontSize(7); doc.setTextColor(120,120,120);
+  doc.text('Generated '+new Date().toLocaleString()+' · Engineering Office',20,H-16);
+  doc.save(`time-card-${u.id}.pdf`); toast('Time card generated.','success');
+}
+
 render();
-  subscribeRealtime(() => render());
+subscribeRealtime(() => render());
 </script>
-</body></html>
+</body>
+</html>
