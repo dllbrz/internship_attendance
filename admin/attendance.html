@@ -122,6 +122,15 @@ async function render(){
             <div class="form-group"><label for="s_hours">Credited hours</label>
               <input type="number" class="form-control" id="s_hours" min="0" max="24" step="0.25"></div>
           </div>
+          <div class="form-group" id="s_otherRow" style="display:none">
+            <label for="s_other">Other: specify the type of schedule <span aria-hidden="true">*</span></label>
+            <input type="text" class="form-control" id="s_other" maxlength="60"
+                   placeholder="e.g. Seminar, Team building, Suspension of work"
+                   aria-describedby="s_otherHint">
+            <p class="text-sm text-muted" id="s_otherHint" style="margin-top:4px">
+              This exact wording is saved with the day and is visible to the intern.
+            </p>
+          </div>
           <div class="form-row" id="s_timeRow">
             <div class="form-group"><label for="s_tin">Time in</label>
               <input type="time" class="form-control" id="s_tin" onchange="recalcSchedHours()"></div>
@@ -277,6 +286,7 @@ function openSchedule(){
     CREDIT_TYPES.map(t=>`<option value="${t.value}">${t.label}</option>`).join('');
   document.getElementById('s_date').value = CURRENT_DATE || todayStr();
   document.getElementById('s_note').value = '';
+  document.getElementById('s_other').value = '';
   document.getElementById('s_err').textContent = '';
   onSchedStudent();
   onSchedType();
@@ -302,6 +312,8 @@ function onSchedType(){
   const row  = document.getElementById('s_timeRow');
   const isRegular = (type === 'regular');
   row.style.display = isRegular ? '' : 'none';
+  const otherRow = document.getElementById('s_otherRow');
+  if(otherRow) otherRow.style.display = (type === 'other') ? '' : 'none';
   const note = document.getElementById('s_note');
   note.placeholder = isRegular
     ? 'e.g. Attendance was not scanned — recorded manually by the admin'
@@ -329,8 +341,19 @@ async function saveSchedule(){
   const date  = document.getElementById('s_date').value;
   const hours = document.getElementById('s_hours').value;
   const type  = document.getElementById('s_type').value;
-  const note  = document.getElementById('s_note').value;
+  let   note  = document.getElementById('s_note').value;
   if(!date){ err.textContent = 'Pick the date of the schedule.'; return; }
+  if(type === 'other'){
+    const other = document.getElementById('s_other');
+    const label = (other.value || '').trim();
+    if(!label){
+      err.textContent = 'Type the exact schedule reason in the "Other" field.';
+      other.focus();
+      return;
+    }
+    // The typed type leads the note so it shows everywhere the day is displayed.
+    note = note.trim() ? `${label} — ${note.trim()}` : label;
+  }
   const tin  = document.getElementById('s_tin').value;
   const tout = document.getElementById('s_tout').value;
   if(type === 'regular'){
@@ -355,7 +378,7 @@ async function saveSchedule(){
   if(!r.ok){ err.textContent = r.error; return; }
 
   closeModal('schedModal');
-  toast(`${CREDIT_LABELS[type]} saved for ${r.student.name} on ${fmtDate(date)}.`,'success');
+  toast(`${type === 'other' ? note.split(' — ')[0] : CREDIT_LABELS[type]} saved for ${r.student.name} on ${fmtDate(date)}.`,'success');
   await changeDate(date);
 }
 
