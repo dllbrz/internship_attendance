@@ -967,6 +967,42 @@ async function updateOwnProfile(patch){
 }
 
 // ============================================================================
+// CHANGE OWN EMAIL (interns and admins)
+// ----------------------------------------------------------------------------
+// Supabase Auth owns the email address. We ask Auth to change it; depending on
+// the project's "Secure email change" setting the user receives one or two
+// confirmation links. The `profiles.email` column is only mirrored once the
+// change is actually confirmed (see syncOwnEmailFromAuth below, which runs on
+// every sign-in/page load path that calls it).
+// ============================================================================
+async function updateOwnEmail(newEmail){
+  const email = String(newEmail || '').trim().toLowerCase();
+  if(!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return {ok:false, error:'Enter a valid email address.'};
+  if(email.length > 255) return {ok:false, error:'Email address is too long.'};
+  const { data:{user} } = await sb.auth.getUser();
+  if(!user) return {ok:false, error:'Not signed in.'};
+  if((user.email||'').toLowerCase() === email) return {ok:false, error:'That is already your current email address.'};
+  const { error } = await sb.auth.updateUser({ email }, { emailRedirectTo: authUrl('') });
+  if(error) return {ok:false, error:error.message};
+  return {ok:true, pending:email};
+}
+
+// Mirrors the confirmed auth email into profiles.email so the UI and admin
+// lists stay in sync after the user clicks the confirmation link.
+async function syncOwnEmailFromAuth(){
+  try{
+    const { data:{user} } = await sb.auth.getUser();
+    if(!user || !user.email) return {ok:false};
+    const cu = window.__DB__ && window.__DB__.currentUser;
+    if(cu && cu.email && cu.email.toLowerCase() === user.email.toLowerCase()) return {ok:true, changed:false};
+    const { error } = await sb.from('profiles').update({ email: user.email }).eq('id', user.id);
+    if(error) return {ok:false, error:error.message};
+    if(cu) cu.email = user.email;
+    return {ok:true, changed:true};
+  }catch(e){ return {ok:false, error:String(e && e.message || e)}; }
+}
+
+// ============================================================================
 // RENAME REQUIREMENT FILE (display name only — storage path unchanged)
 // ============================================================================
 async function renameStudentRequirement(studentInternId, reqId, newName){
