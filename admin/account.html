@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Attendance — Admin · Naic OJT</title>
+<title>Account Settings — Admin · Engineering Office</title>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="../css/styles.css">
 </head>
@@ -13,404 +13,257 @@
 <script src="../js/data.js"></script>
 <script src="../js/app.js"></script>
 <script>
-let CURRENT_TAB = 'all';
-let SEARCH = '';
-let CURRENT_DATE = todayStr();
-let REFRESH_TIMER = null;
-let DAY_ROWS = [];       // records that ACTUALLY exist for CURRENT_DATE
-let EDIT_RECORD_ID = null;
+let CURRENT_ADMIN = null;
+let ADMINS = [];
+let EDIT_INTERN_ID = null;
 
 async function render(){
-  const admin = await requireAdmin(); if(!admin) return;
-  document.getElementById('shell').innerHTML = renderSidebar('admin','attendance') + `
+  CURRENT_ADMIN = await requireAdmin();
+  if(!CURRENT_ADMIN) return;
+  // Mirror a just-confirmed email change into the local session view.
+  try { await syncOwnEmailFromAuth(); } catch(_){}
+
+  document.getElementById('shell').innerHTML = renderSidebar('admin','account') + `
     <main class="main">
-      ${renderTopbar('Attendance', "Records for the selected date only. Late/Absent thresholds follow the Scanner schedule.",
-        `<button class="btn btn-outline" onclick="refreshData()">Refresh</button>
-         <button class="btn btn-primary" onclick="openSchedule()">+ Add Schedule</button>
-         <a class="btn-icon" href="archived.html#attendance" title="Open deleted records archive" aria-label="Open deleted records archive">${ICONS.file}</a>
-         <button class="btn btn-outline" style="color:#c53030;border-color:#c53030" onclick="deleteForDate()">Delete all for this date</button>`)}
+      ${renderTopbar('Account Settings','Edit your admin profile, manage administrators, and update intern accounts.')}
+
+      <!-- Admin's own profile -->
+      <div class="card">
+        <div class="card-head"><div class="card-title">My Admin Profile</div></div>
+        <div style="display:flex;gap:20px;align-items:center;flex-wrap:wrap">
+          <div class="avatar" style="width:96px;height:96px;font-size:28px;overflow:hidden;border-radius:50%;flex-shrink:0">
+            ${CURRENT_ADMIN.avatar ? `<img src="${CURRENT_ADMIN.avatar}" alt="" style="width:100%;height:100%;object-fit:cover">` : (CURRENT_ADMIN.name||'A').split(' ').map(x=>x[0]).slice(0,2).join('').toUpperCase()}
+          </div>
+          <div style="flex:1;min-width:240px">
+            <div class="form-group"><label>Display Name / Username</label>
+              <input class="form-control" id="admName" value="${escapeAttr(CURRENT_ADMIN.name||'')}"></div>
+            <div class="form-group">
+              <label for="admEmail">Email Address</label>
+              <input class="form-control" type="email" id="admEmail" autocomplete="email"
+                     value="${escapeAttr(CURRENT_ADMIN.email||'')}" aria-describedby="admEmailHint">
+              <small class="text-muted text-sm" id="admEmailHint">A confirmation link is sent to the new address. Sign in with your current email until you confirm it.</small>
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <input type="file" id="admPic" accept="image/*" style="display:none" onchange="admUploadPic(event)">
+            <button class="btn btn-outline btn-sm" onclick="document.getElementById('admPic').click()">Upload / Change Photo</button>
+            <button class="btn btn-outline btn-sm" style="color:#c53030;border-color:#c53030"
+                    id="delPicBtn" onclick="admDelPic()"
+                    aria-label="Delete profile photo">Delete Photo</button>
+            <button class="btn btn-primary btn-sm" onclick="admSaveName()">Save Name</button>
+            <button class="btn btn-outline btn-sm" id="admEmailBtn" onclick="admSaveEmail()">Change Email</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card-grid-2">
+        <div class="card">
+          <div class="card-head"><div class="card-title">Change Password</div></div>
+          <form onsubmit="chPass(event)">
+            <div class="form-row">
+              <div class="form-group"><label>New Password</label><input class="form-control" type="password" id="n1" required minlength="8"></div>
+              <div class="form-group"><label>Confirm</label><input class="form-control" type="password" id="n2" required minlength="8"></div>
+            </div>
+            <p class="text-muted text-sm">Minimum 8 characters. You'll stay signed in.</p>
+            <button class="btn btn-primary">Update Password</button>
+          </form>
+        </div>
+        <div class="card">
+          <div class="card-head"><div class="card-title">Add Administrator</div></div>
+          <form onsubmit="addAdmin(event)">
+            <div class="form-group"><label for="an">Full Name</label><input class="form-control" id="an" required></div>
+            <div class="form-group"><label for="ae">Email</label>
+              <input class="form-control" type="email" id="ae" required placeholder="name@naic.gov.ph"></div>
+
+            <fieldset style="border:0;padding:0;margin:0 0 10px">
+              <legend class="text-sm" style="font-weight:600;color:var(--blue-900);margin-bottom:6px">How should they get access?</legend>
+              <label style="display:flex;gap:8px;align-items:flex-start;margin-bottom:6px;cursor:pointer">
+                <input type="radio" name="admMode" value="invite" checked onchange="toggleAdminMode()" style="margin-top:3px">
+                <span class="text-sm">Send an email invitation link <span class="text-muted">(recommended — they set their own password)</span></span>
+              </label>
+              <label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer">
+                <input type="radio" name="admMode" value="password" onchange="toggleAdminMode()" style="margin-top:3px">
+                <span class="text-sm">Set a temporary password myself</span>
+              </label>
+            </fieldset>
+
+            <div class="form-group" id="pwWrap" style="display:none">
+              <label for="ap">Temporary Password</label>
+              <input class="form-control" type="password" id="ap" minlength="8" autocomplete="new-password">
+            </div>
+
+            <p class="text-muted text-sm" id="admHint">An invitation email with a secure sign-in link is sent automatically. The <code>admin</code> role is granted on acceptance.</p>
+            <button class="btn btn-yellow" id="addAdminBtn">Send Invitation</button>
+          </form>
+        </div>
+      </div>
 
       <div class="card">
-        <div class="filter-row" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
-          <label class="text-sm" for="dateFilter" style="min-width:auto">Date:</label>
-          <input type="date" class="form-control" id="dateFilter" value="${CURRENT_DATE}" style="max-width:180px" onchange="changeDate(this.value)">
-          <button class="btn btn-outline btn-sm" onclick="changeDate(todayStr())">Today</button>
-          <label class="sr-only" for="search">Search interns</label>
-          <input type="text" class="form-control" id="search" placeholder="Search name or ID…" style="flex:1;min-width:200px" oninput="onSearch(this.value)">
+        <div class="card-head">
+          <div class="card-title">Administrators</div>
+          <button class="btn btn-ghost btn-sm" onclick="loadAdmins()">Refresh</button>
         </div>
-
-        <div class="text-sm text-muted" id="dateSummary" aria-live="polite" style="margin-bottom:10px"></div>
-
-        <div class="status-tabs">
-          <button class="status-tab active" data-tab="all"    onclick="switchTab('all')">All <span class="count" id="cnt-all">0</span></button>
-          <button class="status-tab"        data-tab="present" onclick="switchTab('present')">Present <span class="count" id="cnt-present">0</span></button>
-          <button class="status-tab"        data-tab="late"    onclick="switchTab('late')">Late <span class="count" id="cnt-late">0</span></button>
-          <button class="status-tab"        data-tab="absent"  onclick="switchTab('absent')">Absent <span class="count" id="cnt-absent">0</span></button>
-        </div>
-
-        <div class="table-wrap">
-          <table class="table">
-            <thead><tr>
-              <th scope="col">Intern ID</th><th scope="col">Name</th>
-              <th scope="col">Time In</th><th scope="col">Time Out</th>
-              <th scope="col">Status</th><th scope="col">Hours</th>
-              <th scope="col" style="text-align:right">Actions</th>
-            </tr></thead>
-            <tbody id="rows"></tbody>
-          </table>
-        </div>
+        <div class="table-wrap" id="adminTable"><div class="text-muted p-4">Loading…</div></div>
       </div>
-    </main>
-
-    <!-- Manual record modification -->
-    <div class="modal" id="recModal">
-      <div class="modal-inner" style="max-width:480px">
-        <div class="modal-head">
-          <h3>Edit Attendance Record</h3>
-          <button class="close-x" onclick="closeModal('recModal')" aria-label="Close dialog">×</button>
-        </div>
-        <div class="modal-body">
-          <div id="r_who" style="font-weight:700;color:var(--blue-900);margin-bottom:4px"></div>
-          <div class="text-muted text-sm" id="r_date" style="margin-bottom:14px"></div>
-          <div class="form-row">
-            <div class="form-group"><label for="r_in">Time In</label><input type="time" class="form-control" id="r_in"></div>
-            <div class="form-group"><label for="r_out">Time Out</label><input type="time" class="form-control" id="r_out"></div>
-          </div>
-          <div class="form-group">
-            <label for="r_status">Status</label>
-            <select class="form-control" id="r_status">
-              <option value="present">Present</option>
-              <option value="late">Late</option>
-              <option value="absent">Absent</option>
-            </select>
-          </div>
-          <p class="text-sm text-muted" id="r_hint" aria-live="polite"></p>
-          <div class="form-error" id="r_err" role="alert"></div>
-        </div>
-        <div class="modal-foot">
-          <button class="btn btn-outline" onclick="closeModal('recModal')">Cancel</button>
-          <button class="btn btn-primary" id="r_save" onclick="saveRecord()">Save Changes</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Add a scheduled / credited day for a selected intern -->
-    <div class="modal" id="schedModal">
-      <div class="modal-inner" style="max-width:520px">
-        <div class="modal-head">
-          <h3>Add Schedule for an Intern</h3>
-          <button class="close-x" onclick="closeModal('schedModal')" aria-label="Close dialog">×</button>
-        </div>
-        <div class="modal-body">
-          <p class="text-sm text-muted" style="margin-bottom:14px">
-            Use this to record a <strong>Regular day</strong> that was not scanned (for example
-            when attendance could not be checked), or to grant a rest day, reward, holiday or
-            off-site day. The intern does not need to scan — the hours below are still credited
-            and the day shows as attended for both the admin and the intern.
-          </p>
-          <div class="form-group">
-            <label for="s_student">Intern</label>
-            <select class="form-control" id="s_student" onchange="onSchedStudent()"></select>
-          </div>
-          <div class="form-group">
-            <label for="s_type">Schedule type</label>
-            <select class="form-control" id="s_type" onchange="onSchedType()"></select>
-          </div>
-          <div class="form-row">
-            <div class="form-group"><label for="s_date">Date</label>
-              <input type="date" class="form-control" id="s_date"></div>
-            <div class="form-group"><label for="s_hours">Credited hours</label>
-              <input type="number" class="form-control" id="s_hours" min="0" max="24" step="0.25"></div>
-          </div>
-          <div class="form-row" id="s_timeRow">
-            <div class="form-group"><label for="s_tin">Time in</label>
-              <input type="time" class="form-control" id="s_tin" onchange="recalcSchedHours()"></div>
-            <div class="form-group"><label for="s_tout">Time out</label>
-              <input type="time" class="form-control" id="s_tout" onchange="recalcSchedHours()"></div>
-          </div>
-          <div class="form-group">
-            <label for="s_note">Reason / note (visible to the intern)</label>
-            <input type="text" class="form-control" id="s_note" maxlength="160" placeholder="e.g. Reward rest day for outstanding performance">
-          </div>
-          <p class="text-sm text-muted" id="s_hint" aria-live="polite"></p>
-          <div class="form-error" id="s_err" role="alert"></div>
-        </div>
-        <div class="modal-foot">
-          <button class="btn btn-outline" onclick="closeModal('schedModal')">Cancel</button>
-          <button class="btn btn-primary" id="s_save" onclick="saveSchedule()">Save Schedule</button>
-        </div>
-      </div>
-    </div>`;
+    </main>`;
   startClock('#clockBox');
-  await loadDate();
-  if(REFRESH_TIMER) clearInterval(REFRESH_TIMER);
-  REFRESH_TIMER = setInterval(refreshData, 30000);
+  toggleAdminMode();
+  await loadAdmins();
 }
 
-async function changeDate(d){
-  if(!d) return;
-  CURRENT_DATE = d;
-  const picker = document.getElementById('dateFilter');
-  if(picker && picker.value !== d) picker.value = d;
-  await loadDate();
-}
-function onSearch(v){ SEARCH = v.toLowerCase().trim(); drawRows(); }
-function switchTab(tab){
-  CURRENT_TAB = tab;
-  document.querySelectorAll('.status-tab').forEach(b=>b.classList.toggle('active', b.dataset.tab===tab));
-  drawRows();
-}
-
-/* Fetch the records that EXIST for the chosen date. Interns without a record
-   that day are intentionally NOT listed — the table reflects real detected
-   records only. */
-async function loadDate(){
-  const rows = document.getElementById('rows');
-  if(rows) rows.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#888;padding:20px">Loading records…</td></tr>';
-  if(CURRENT_DATE === todayStr()) await autoMarkAbsent();
-  const r = await fetchAttendanceForDate(CURRENT_DATE);
-  if(!r.ok){ toast(r.error,'error'); DAY_ROWS = []; }
-  else DAY_ROWS = r.rows;
-  drawRows();
-}
-async function refreshData(){ await loadDate(); }
-
-function decorate(rec){
-  const s = window.__DB__.students.find(x=>x.id===rec.student_id);
-  return {
-    ...rec,
-    name: s ? s.name : rec.student_id,
-    avatar: s ? s.avatar : null,
-    archived: s ? s.active === false : false
-  };
+async function loadAdmins(){
+  const wrap = document.getElementById('adminTable');
+  wrap.innerHTML = '<div class="text-muted p-4">Loading…</div>';
+  const r = await adminManage('list');
+  if(!r.ok){ wrap.innerHTML = `<div class="p-4" style="color:var(--red)">${escapeHtml(r.error)}</div>`; return; }
+  ADMINS = r.data.admins || [];
+  wrap.innerHTML = `<table>
+    <thead><tr><th>Name</th><th>Email</th><th>Created</th><th>Role</th><th style="text-align:right">Action</th></tr></thead>
+    <tbody>${ADMINS.map(a=>`
+      <tr>
+        <td>${escapeHtml(a.name)}</td><td>${escapeHtml(a.email)}</td>
+        <td>${new Date(a.created_at).toLocaleDateString()}</td>
+        <td><span class="pill blue">Admin</span></td>
+        <td style="text-align:right">${a.is_self ? '<span class="text-muted text-sm">You</span>'
+          : `<button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="delAdmin('${a.id}','${escapeAttr(a.email)}')">Remove</button>`}</td>
+      </tr>`).join('')}</tbody></table>`;
 }
 
-function drawRows(){
-  const all = DAY_ROWS.map(decorate).filter(r=>
-    !SEARCH || String(r.student_id).toLowerCase().includes(SEARCH) || String(r.name).toLowerCase().includes(SEARCH)
-  ).sort((a,b)=> (b.time_in||'').localeCompare(a.time_in||'') || String(a.name).localeCompare(String(b.name)));
 
-  const counts = { all: all.length, present:0, late:0, absent:0 };
-  all.forEach(r=>{ r._disp = attendanceDisplay(r, null, { admin:true }); counts[r._disp.key]++; });
-  document.getElementById('cnt-all').textContent = counts.all;
-  document.getElementById('cnt-present').textContent = counts.present;
-  document.getElementById('cnt-late').textContent = counts.late;
-  document.getElementById('cnt-absent').textContent = counts.absent;
-
-  const summary = document.getElementById('dateSummary');
-  summary.textContent = DAY_ROWS.length
-    ? `${DAY_ROWS.length} attendance record${DAY_ROWS.length===1?'':'s'} detected for ${fmtDate(CURRENT_DATE)}.`
-    : `No attendance records were recorded on ${fmtDate(CURRENT_DATE)}.`;
-
-  const filtered = CURRENT_TAB==='all' ? all : all.filter(r=>r._disp.key===CURRENT_TAB);
-  const rows = document.getElementById('rows');
-
-  if(!DAY_ROWS.length){
-    rows.innerHTML = `<tr><td colspan="7" style="text-align:center;color:#888;padding:26px">
-      No records found for <strong>${fmtDate(CURRENT_DATE)}</strong>. Pick another date.</td></tr>`;
-    return;
-  }
-
-  rows.innerHTML = filtered.map(r=>`
-    <tr>
-      <td style="font-weight:700;color:var(--blue-800)">${escapeHtml(r.student_id)}</td>
-      <td><div class="cell-name">${profileIconHTML(r,30)}<span class="name-text">${escapeHtml(r.name)}</span>${r.archived?' <span class="pill gray">Archived</span>':''}</div></td>
-      <td>${fmt12(r.time_in)}</td>
-      <td>${fmt12(r.time_out)}</td>
-      <td><span class="pill ${r._disp.tone||r._disp.key}">${escapeHtml(r._disp.label)}</span>${r.credit_type?`<div class="text-sm text-muted" style="margin-top:4px">${r.credit_type==='regular'?'Recorded manually':'Credited'}${r.note?': '+escapeHtml(r.note):''}</div>`:''}</td>
-      <td>${Number(r.hours||0).toFixed(2)}</td>
-      <td style="text-align:right;white-space:nowrap">
-        <button class="btn-icon" onclick="openRecord('${r.id}')" title="Edit record" aria-label="Edit record for ${escapeAttr(r.name)}">${ICONS.edit}</button>
-        <button class="btn-icon danger" onclick="delRecord('${r.id}')" title="Delete record" aria-label="Delete record for ${escapeAttr(r.name)}">${ICONS.trash}</button>
-      </td>
-    </tr>`).join('') || `<tr><td colspan="7" style="text-align:center;color:#888;padding:20px">No ${CURRENT_TAB} records for ${fmtDate(CURRENT_DATE)}.</td></tr>`;
+function openIntern(id){
+  const s = getDB().students.find(x=>x.id===id); if(!s) return;
+  EDIT_INTERN_ID = id;
+  document.getElementById('i_name').textContent = `${s.name} · ${s.id}`;
+  document.getElementById('i_full').value = s.name || '';
+  document.getElementById('i_phone').value = s.phone || '';
+  document.getElementById('i_school').value = s.school || '';
+  document.getElementById('i_course').value = s.course || '';
+  document.getElementById('i_addr').value = s.address || '';
+  document.getElementById('i_adv').value = s.adviser_name || '';
+  document.getElementById('i_advc').value = s.adviser_contact || '';
+  document.getElementById('i_start').value = s.start_date || '';
+  document.getElementById('i_end').value = s.end_date || '';
+  document.getElementById('i_hours').value = s.required_hours || '';
+  document.getElementById('i_tin').value = s.expected_time_in || '08:00';
+  document.getElementById('i_err').textContent = '';
+  openModal('internModal');
 }
 
-/* ---------- manual modification ---------- */
-function openRecord(id){
-  const rec = DAY_ROWS.find(r=>r.id===id); if(!rec) return;
-  const r = decorate(rec);
-  EDIT_RECORD_ID = id;
-  document.getElementById('r_who').textContent = `${r.name} · ${r.student_id}`;
-  document.getElementById('r_date').textContent = fmtDate(r.date);
-  document.getElementById('r_in').value = r.time_in || '';
-  document.getElementById('r_out').value = r.time_out || '';
-  document.getElementById('r_status').value = r.status || 'absent';
-  document.getElementById('r_err').textContent = '';
-  document.getElementById('r_hint').textContent = 'Hours are recalculated automatically from time in/out minus the intern\u2019s break.';
-  openModal('recModal');
+
+async function chPass(e){
+  e.preventDefault();
+  if(n1.value !== n2.value){ toast('Passwords do not match','error'); return; }
+  const r = await updateCurrentPassword(n1.value);
+  if(!r.ok){ toast(r.error,'error'); return; }
+  n1.value = ''; n2.value = '';
+  toast('Password changed','success');
 }
 
-async function saveRecord(){
-  const err  = document.getElementById('r_err');
-  const tin  = document.getElementById('r_in').value;
-  const tout = document.getElementById('r_out').value;
-  const status = document.getElementById('r_status').value;
-
-  if(tout && !tin){ err.textContent = 'A time out needs a time in.'; return; }
-  if(tin && tout && tout <= tin){ err.textContent = 'Time out must be later than time in.'; return; }
-  if(status !== 'absent' && !tin){ err.textContent = 'Present/Late records need a time in.'; return; }
-
-  const btn = document.getElementById('r_save');
-  btn.disabled = true; btn.textContent = 'Saving…';
-  const r = await updateAttendanceRecord(EDIT_RECORD_ID, { time_in:tin, time_out:tout, status, verified:true });
-  btn.disabled = false; btn.textContent = 'Save Changes';
-  if(!r.ok){ err.textContent = r.error; return; }
-
-  const i = DAY_ROWS.findIndex(x=>x.id===EDIT_RECORD_ID);
-  if(i>=0) DAY_ROWS[i] = r.record;
-  closeModal('recModal');
-  toast('Record updated.','success');
-  drawRows();
+function adminMode(){
+  const el = document.querySelector('input[name="admMode"]:checked');
+  return el ? el.value : 'invite';
+}
+function toggleAdminMode(){
+  const invite = adminMode() === 'invite';
+  document.getElementById('pwWrap').style.display = invite ? 'none' : '';
+  document.getElementById('ap').required = !invite;
+  document.getElementById('addAdminBtn').textContent = invite ? 'Send Invitation' : 'Add Administrator';
+  document.getElementById('admHint').innerHTML = invite
+    ? 'An invitation email with a secure sign-in link is sent automatically. The <code>admin</code> role is granted on acceptance.'
+    : 'Creates a confirmed account immediately with the <code>admin</code> role. Share the password securely.';
 }
 
-/* ---------- deletion (soft delete → Archive) ---------- */
-/* ---------- add schedule / credited day ---------- */
-function openSchedule(){
-  const actives = (window.__DB__.students||[]).filter(s=>s.active !== false)
-    .sort((a,b)=>String(a.name).localeCompare(String(b.name)));
-  if(!actives.length){ toast('No active interns to schedule.','info'); return; }
+async function addAdmin(e){
+  e.preventDefault();
+  const name  = document.getElementById('an').value.trim();
+  const email = document.getElementById('ae').value.trim();
+  const pw    = document.getElementById('ap').value;
+  const invite = adminMode() === 'invite';
 
-  document.getElementById('s_student').innerHTML =
-    actives.map(s=>`<option value="${escapeAttr(s.id)}">${escapeHtml(s.name)} — ${escapeHtml(s.id)}</option>`).join('');
-  document.getElementById('s_type').innerHTML =
-    CREDIT_TYPES.map(t=>`<option value="${t.value}">${t.label}</option>`).join('');
-  document.getElementById('s_date').value = CURRENT_DATE || todayStr();
-  document.getElementById('s_note').value = '';
-  document.getElementById('s_err').textContent = '';
-  onSchedType();
-  openModal('schedModal');
-  onSchedStudent();
-}
+  if(!invite && pw.length < 8){ toast('Password must be at least 8 characters.','error'); return; }
 
-// The Time in / Time out defaults MUST mirror the intern's own shift as saved on
-// their profile (admin > Students). The profile row is re-read first so the modal
-// can never show a stale cache value or the office-wide fallback schedule.
-async function onSchedStudent(){
-  const id = document.getElementById('s_student').value;
-  let s = (window.__DB__.students||[]).find(x=>x.id===id);
-  if(typeof fetchStudentSchedule === 'function'){
-    try { s = (await fetchStudentSchedule(id)) || s; } catch(_){}
-  }
-  // Ignore a re-render for a different intern that started while we were fetching.
-  if(document.getElementById('s_student').value !== id) return;
-
-  const sch = (typeof getOfficeSchedule === 'function' ? getOfficeSchedule() : {}) || {};
-  const tin  = (s && s.expected_time_in)  || sch.start_time || '08:00';
-  const tout = (s && s.expected_time_out) || sch.end_time   || '17:00';
-  document.getElementById('s_tin').value  = tin;
-  document.getElementById('s_tout').value = tout;
-  document.getElementById('s_hours').value = defaultCreditHours(s);
-  document.getElementById('s_hint').textContent = s
-    ? `Default credit follows ${s.name}'s shift (${fmt12(tin)} – ${fmt12(tout)} minus break). You can change it.`
-    : '';
-}
-
-// "Regular day" = the intern actually reported for duty but nobody scanned,
-// so the admin types the real time in / time out and the hours follow them.
-function onSchedType(){
-  const type = document.getElementById('s_type').value;
-  const row  = document.getElementById('s_timeRow');
-  const isRegular = (type === 'regular');
-  row.style.display = isRegular ? '' : 'none';
-  const note = document.getElementById('s_note');
-  note.placeholder = isRegular
-    ? 'e.g. Attendance was not scanned — recorded manually by the admin'
-    : 'e.g. Reward rest day for outstanding performance';
-  if(isRegular) recalcSchedHours();
-}
-
-// Recompute credited hours from the typed times (minus the intern's break).
-function recalcSchedHours(){
-  const tin  = document.getElementById('s_tin').value;
-  const tout = document.getElementById('s_tout').value;
-  if(!tin || !tout || tout <= tin) return;
-  const id = document.getElementById('s_student').value;
-  const s  = (window.__DB__.students||[]).find(x=>x.id===id);
-  const toM = t => (+t.slice(0,2))*60 + (+t.slice(3,5));
-  const brk = (typeof breakMinutesFor === 'function') ? breakMinutesFor(s) : 0;
-  document.getElementById('s_hours').value =
-    Math.max(0, (toM(tout) - toM(tin) - brk) / 60).toFixed(2);
-}
-
-async function saveSchedule(){
-  const err = document.getElementById('s_err');
-  err.textContent = '';
-  const id    = document.getElementById('s_student').value;
-  const date  = document.getElementById('s_date').value;
-  const hours = document.getElementById('s_hours').value;
-  const type  = document.getElementById('s_type').value;
-  const note  = document.getElementById('s_note').value;
-  if(!date){ err.textContent = 'Pick the date of the schedule.'; return; }
-  const tin  = document.getElementById('s_tin').value;
-  const tout = document.getElementById('s_tout').value;
-  if(type === 'regular'){
-    if(!tin || !tout){ err.textContent = 'Enter the time in and time out for the regular day.'; return; }
-    if(tout <= tin){ err.textContent = 'Time out must be later than time in.'; return; }
-  }
-
-  const existing = (window.__DB__.attendance||[]).find(a=>a.student_id===id && a.date===date && !a.credit_type && a.time_in);
-  if(existing){
-    const ok = await confirmDelete(
-      `${id} already has a scanned record on ${fmtDate(date)}. Replacing it with a credited schedule will overwrite the scanned times. Continue?`,
-      'Replace existing record'
-    );
-    if(!ok) return;
-  }
-
-  const btn = document.getElementById('s_save');
-  btn.disabled = true; btn.textContent = 'Saving…';
-  const r = await addScheduledCredit(id, { date, credit_type:type, hours, note,
-                                           time_in:tin || undefined, time_out:tout || undefined });
-  btn.disabled = false; btn.textContent = 'Save Schedule';
-  if(!r.ok){ err.textContent = r.error; return; }
-
-  closeModal('schedModal');
-  toast(`${CREDIT_LABELS[type]} saved for ${r.student.name} on ${fmtDate(date)}.`,'success');
-  await changeDate(date);
-}
-
-async function delRecord(id){
-  const rec = DAY_ROWS.find(r=>r.id===id); if(!rec) return;
-  const r = decorate(rec);
-  const ok = await confirmDelete(
-    `Delete the ${fmtDate(r.date)} record for ${r.name} (${r.student_id})? You can restore it from the Archived page.`,
-    'Delete attendance record'
-  );
+  const ok = await confirmDialog({
+    title: invite ? 'Send admin invitation' : 'Add administrator',
+    message: invite
+      ? `Send an invitation link to ${email}? They will be able to sign in as an administrator.`
+      : `Create an administrator account for ${email}?`,
+    confirmText: invite ? 'Send Invitation' : 'Add Administrator'
+  });
   if(!ok) return;
 
-  // Optimistic removal so the row disappears immediately.
-  DAY_ROWS = DAY_ROWS.filter(x=>x.id!==id);
-  drawRows();
+  const btn = document.getElementById('addAdminBtn');
+  const label = btn.textContent;
+  btn.disabled = true; btn.textContent = invite ? 'Sending…' : 'Adding…';
+  const r = invite
+    ? await inviteAdmin(email, name)
+    : await adminManage('create', { full_name:name, email, password:pw });
+  btn.disabled = false; btn.textContent = label;
+  if(!r.ok){ toast(r.error,'error'); return; }
 
-  const res = await softDeleteAttendance(id);
-  if(!res.ok){
-    toast(res.error,'error');
-    await loadDate();
-    return;
-  }
-  toast('Record deleted. It is now in Archived.','success');
+  document.getElementById('an').value = '';
+  document.getElementById('ae').value = '';
+  document.getElementById('ap').value = '';
+  toast(invite ? `Invitation sent to ${email}.` : 'Administrator added.','success');
+  await loadAdmins();
 }
 
-async function deleteForDate(){
-  if(!DAY_ROWS.length){ toast('There are no records for this date.','info'); return; }
-  const ok = await confirmDelete(
-    `Delete all ${DAY_ROWS.length} attendance record(s) for ${fmtDate(CURRENT_DATE)}? They can be restored from the Archived page.`,
-    'Delete records for date'
-  );
+async function delAdmin(userId, email){
+  const ok = await confirmDelete(`Delete admin ${email}? This removes their account permanently.`, 'Remove administrator');
   if(!ok) return;
+  const r = await adminManage('delete', { user_id: userId });
+  if(!r.ok){ toast(r.error,'error'); return; }
+  toast('Administrator removed','success');
+  await loadAdmins();
+}
 
-  const ids = DAY_ROWS.map(r=>r.id);
-  DAY_ROWS = [];
-  drawRows();
-  const { error } = await sb.from('attendance').update({ deleted_at:new Date().toISOString() }).in('id', ids);
-  if(error){ toast(error.message,'error'); await loadDate(); return; }
-  window.__DB__.attendance = window.__DB__.attendance.filter(a=>!ids.includes(a.id));
-  toast(`${ids.length} record(s) moved to Archived.`,'success');
+async function admSaveName(){
+  const name = document.getElementById('admName').value.trim();
+  if(!name){ toast('Name cannot be empty','error'); return; }
+  const r = await updateAdminSelf({ full_name:name });
+  if(!r.ok){ toast(r.error,'error'); return; }
+  toast('Profile updated','success'); render();
+}
+async function admSaveEmail(){
+  const input = document.getElementById('admEmail');
+  const email = (input.value||'').trim().toLowerCase();
+  const current = ((CURRENT_ADMIN && CURRENT_ADMIN.email)||'').trim().toLowerCase();
+  if(!email){ toast('Email cannot be empty','error'); input.focus(); return; }
+  if(email === current){ toast('That is already your current email address.','info'); return; }
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){ toast('Enter a valid email address.','error'); input.focus(); return; }
+  const ok = await confirmDialog({
+    title: 'Change email address',
+    message: `Send a confirmation link to ${email}? Your sign-in email changes only after you click that link.`,
+    confirmText: 'Send Link'
+  });
+  if(!ok) return;
+  const btn = document.getElementById('admEmailBtn');
+  if(btn){ btn.disabled = true; btn.textContent = 'Sending…'; }
+  const r = await updateOwnEmail(email);
+  if(btn){ btn.disabled = false; btn.textContent = 'Change Email'; }
+  if(!r.ok){ toast(r.error,'error'); return; }
+  toast('Confirmation link sent to '+email+'. Click it to finish the change.','success');
+}
+async function admUploadPic(e){
+  const f = e.target.files[0]; if(!f) return;
+  toast('Uploading…','info');
+  const r = await uploadAdminAvatar(f);
+  if(!r.ok){ toast(r.error,'error'); return; }
+  toast('Photo updated','success'); render();
+}
+async function admDelPic(){
+  if(!CURRENT_ADMIN.avatar){ toast('You have no profile photo to remove.','info'); return; }
+  const ok = await confirmDelete('Remove your profile photo? Your initials will be shown instead.','Delete profile photo');
+  if(!ok) return;
+  const btn = document.getElementById('delPicBtn');
+  btn.disabled = true; btn.textContent = 'Removing…';
+  const r = await deleteAdminAvatar();
+  btn.disabled = false; btn.textContent = 'Delete Photo';
+  if(!r.ok){ toast(r.error,'error'); return; }
+  toast('Photo removed','success'); render();
 }
 
 render();
-  subscribeRealtime(() => render());
+subscribeRealtime(() => render());
 </script>
 </body>
 </html>
