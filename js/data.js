@@ -923,6 +923,10 @@ function attendanceDisplay(rec, student, opts){
   // Admin-granted scheduled/credited day (rest day, reward, holiday, ...).
   // Hours are credited even though the intern never scanned, so it always
   // counts as PRESENT and carries its own label.
+  if(rec && rec.credit_type && isAbsentCreditType(rec.credit_type)){
+    return { key:'absent', tone:'red', credited:false, worked:false,
+             label: CREDIT_ABSENT_LABELS[rec.credit_type] || 'Absent' };
+  }
   if(rec && rec.credit_type){
     const label = rec.credit_type === 'regular'
       ? (forAdmin ? 'Present (manual)' : 'Present')
@@ -1220,6 +1224,8 @@ const CREDIT_TYPES = [
   { value:'reward',   label:'Reward rest day' },
   { value:'rest_day', label:'Scheduled rest day' },
   { value:'excused',  label:'Excused (credited)' },
+  { value:'excused_uncredited', label:'Excused (Not Credited) — counts as Absent' },
+  { value:'absent',   label:'Absent (no hours credited)' },
   { value:'holiday',  label:'Holiday' },
   { value:'offsite',  label:'Off-site / official business' },
   { value:'makeup',   label:'Make-up duty' },
@@ -1228,6 +1234,15 @@ const CREDIT_TYPES = [
 const CREDIT_LABELS = CREDIT_TYPES.reduce((m,t)=>(m[t.value]=t.label, m),{});
 // Types the intern actually reported for duty (shown as a plain "Present" day).
 const CREDIT_WORKED_TYPES = ['regular','makeup','offsite'];
+// Types that mean the intern did NOT render hours that day. The row is stored
+// with 0 hours, no time in/out and status 'absent', so every view (admin +
+// intern), every count and every total treats the day as an absence.
+const CREDIT_ABSENT_TYPES = ['excused_uncredited','absent'];
+const CREDIT_ABSENT_LABELS = {
+  excused_uncredited: 'Excused (Not Credited)',
+  absent: 'Absent'
+};
+function isAbsentCreditType(t){ return CREDIT_ABSENT_TYPES.indexOf(t) >= 0; }
 
 /**
  * Read the intern's saved shift straight from their profile row (the same data
@@ -1270,17 +1285,18 @@ async function addScheduledCredit(studentInternId, opts){
   if(!s) return { ok:false, error:'Intern not found.' };
   if(!opts || !opts.date) return { ok:false, error:'Pick a date for the schedule.' };
   if(!CREDIT_LABELS[opts.credit_type]) return { ok:false, error:'Pick a schedule type.' };
-  const hours = Number(opts.hours);
+  const absentType = isAbsentCreditType(opts.credit_type);
+  const hours = absentType ? 0 : Number(opts.hours);
   if(isNaN(hours) || hours < 0 || hours > 24) return { ok:false, error:'Credited hours must be between 0 and 24.' };
 
   const sch = getOfficeSchedule();
   const row = {
     student_id : s.auth_id,
     date       : opts.date,
-    time_in    : (opts.time_in  || s.expected_time_in  || sch.start_time || '08:00'),
-    time_out   : (opts.time_out || s.expected_time_out || sch.end_time   || '17:00'),
-    hours      : +hours.toFixed(2),
-    status     : 'present',
+    time_in    : absentType ? null : (opts.time_in  || s.expected_time_in  || sch.start_time || '08:00'),
+    time_out   : absentType ? null : (opts.time_out || s.expected_time_out || sch.end_time   || '17:00'),
+    hours      : absentType ? 0 : +hours.toFixed(2),
+    status     : absentType ? 'absent' : 'present',
     verified   : true,
     credit_type: opts.credit_type,
     note       : (opts.note || '').trim() || null,
