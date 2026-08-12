@@ -264,7 +264,10 @@ async function bootstrap(){
   if(annError){ console.warn('Announcements load failed:', annError); }
   window.__DB__.announcements = (annc||[]).map(a=>({
     id: a.id, title: a.title, body: a.body, author: a.author,
-    date: (a.created_at||'').slice(0,10)
+    created_at: a.created_at,
+    // publish_at = when interns start seeing it (defaults to creation time).
+    publish_at: a.publish_at || a.created_at,
+    date: String(a.publish_at || a.created_at || '').slice(0,10)
   }));
 
   // attendance
@@ -697,17 +700,67 @@ async function getRequirementUrl(path){
 }
 
 // ---------- ANNOUNCEMENTS ----------
-async function addAnnouncement(title, body){
+// publishAt (optional ISO string) lets the admin schedule an announcement in
+// advance: interns only see it once that moment has passed.
+async function addAnnouncement(title, body, publishAt){
   const author = (window.__DB__.currentUser||{}).name || 'Admin';
-  const { data, error } = await sb.from('announcements').insert({ title, body, author }).select().single();
-  if(error) return {ok:false, error:error.message};
-  window.__DB__.announcements.unshift({ id:data.id, title, body, author, date:(data.created_at||'').slice(0,10) });
-  return {ok:true};
+  const row = { title, body, author };
+  if(publishAt) row.publish_at = publishAt;
+  const { data, error } = await sb.from('announcements').insert(row).select().single();
+  if(error) return {ok:false, error: announcementScheduleError(error)};
+  const pub = data.publish_at || data.created_at;
+  window.__DB__.announcements.unshift({
+    id:data.id, title, body, author, created_at:data.created_at,
+    publish_at:pub, date:String(pub||'').slice(0,10)
+  });
+  sortAnnouncements();
+  return {ok:true, scheduled: isAnnouncementScheduled({publish_at:pub})};
+}
+
+function announcementScheduleError(error){
+  return /publish_at/i.test(error.message||'')
+    ? 'The database is missing the announcement scheduling column. Run sql/migration-announcement-schedule.sql in Supabase.'
+    : error.message;
+}
+// Newest scheduled/published first.
+function sortAnnouncements(){
+  window.__DB__.announcements.sort((a,b)=>
+    String(b.publish_at||b.date||'').localeCompare(String(a.publish_at||a.date||'')));
+}
+// True while the publish moment is still in the future.
+function isAnnouncementScheduled(a){
+  const p = a && (a.publish_at || a.created_at);
+  return !!p && new Date(p).getTime() > Date.now();
+}
+// What the interns are allowed to see right now.
+function publishedAnnouncements(){
+  return (window.__DB__.announcements||[])
+    .filter(a=>!isAnnouncementScheduled(a))
+    .sort((a,b)=>String(b.publish_at||b.date||'').localeCompare(String(a.publish_at||a.date||'')));
+}
+// "Aug 12, 2026 · 8:30 AM"
+function fmtDateTime(iso){
+  if(!iso) return '—';
+  const d = new Date(iso);
+  if(isNaN(d)) return '—';
+  return d.toLocaleDateString('en-US',{year:'numeric',month:'short',day:'2-digit'}) + ' · ' +
+         d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+}
+// ISO string -> value for <input type="datetime-local"> (local time).
+function toLocalInputValue(iso){
+  const d = iso ? new Date(iso) : new Date();
+  if(isNaN(d)) return '';
+  const p = n => String(n).padStart(2,'0');
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
 // ---------- HELPERS ----------
 function fmtDate(iso){ if(!iso) return '—'; const d=new Date(iso); return d.toLocaleDateString('en-US',{year:'numeric',month:'short',day:'2-digit'}); }
-function fmt12(t){ if(!t) return '—'; const [h,m]=t.split(':').map(Number); const ap=h>=12?'PM':'AM'; const hh=((h+11)%12)+1; return `${hh}:${String(m).padStart(2,'0')} ${ap}`; }
+// A missing time is shown as "--:--" (an empty clock field), never as a dash.
+// "00:00" is treated as EMPTY: the Edit Attendance Record form uses 00:00 to
+// mean "no time recorded", so the row must read --:-- and count as Absent.
+function isBlankTime(t){ const s=String(t||'').slice(0,5); return !s || s==='00:00'; }
+function fmt12(t){ if(isBlankTime(t)) return '--:--'; const [h,m]=String(t).split(':').map(Number); const ap=h>=12?'PM':'AM'; const hh=((h+11)%12)+1; return `${hh}:${String(m).padStart(2,'0')} ${ap}`; }
 function humanSize(b){ if(!b) return ''; if(b<1024) return b+' B'; if(b<1024*1024) return (b/1024).toFixed(1)+' KB'; return (b/1048576).toFixed(1)+' MB'; }
 
 // SVG dark-blue icon (used instead of emojis for file types)
@@ -936,10 +989,10 @@ function attendanceDisplay(rec, student, opts){
     return { key:'present', label, tone:'green', credited:true,
              worked: CREDIT_WORKED_TYPES.indexOf(rec.credit_type) >= 0 };
   }
-  if(!rec || !rec.time_in) return { key:'absent', label:'Absent', tone:'red' };
+  if(!rec || isBlankTime(rec.time_in)) return { key:'absent', label:'Absent', tone:'red' };
   const late = rec.status === 'late';
   if(rec.status === 'absent') return { key:'absent', label:'Absent', tone:'red' };
-  if(rec.time_out){
+  if(!isBlankTime(rec.time_out)){
     return late ? { key:'late', label:'Late', tone:'yellow' }
                 : { key:'present', label:'Present', tone:'green' };
   }
@@ -1030,10 +1083,18 @@ async function updateAnnouncement(id, patch){
   const upd = {};
   if(patch.title != null) upd.title = patch.title;
   if(patch.body  != null) upd.body  = patch.body;
+  if('publish_at' in patch) upd.publish_at = patch.publish_at || null;
   const { error } = await sb.from('announcements').update(upd).eq('id', id);
-  if(error) return {ok:false, error:error.message};
+  if(error) return {ok:false, error: announcementScheduleError(error)};
   const a = window.__DB__.announcements.find(x=>x.id===id);
-  if(a){ Object.assign(a, upd); }
+  if(a){
+    Object.assign(a, upd);
+    if('publish_at' in upd){
+      a.publish_at = upd.publish_at || a.created_at;
+      a.date = String(a.publish_at||'').slice(0,10);
+    }
+    sortAnnouncements();
+  }
   return {ok:true};
 }
 async function deleteAnnouncement(id){
@@ -1144,8 +1205,10 @@ async function fetchAttendanceForDate(dateStr){
 
 async function updateAttendanceRecord(recordId, patch){
   const upd = {};
-  if('time_in'  in patch) upd.time_in  = patch.time_in  || null;
-  if('time_out' in patch) upd.time_out = patch.time_out || null;
+  // 00:00 typed in the time fields means "no time recorded" → store NULL so the
+  // table shows --:-- everywhere (admin + intern) instead of "12:00 AM".
+  if('time_in'  in patch) upd.time_in  = isBlankTime(patch.time_in)  ? null : patch.time_in;
+  if('time_out' in patch) upd.time_out = isBlankTime(patch.time_out) ? null : patch.time_out;
   if('status'   in patch) upd.status   = patch.status;
   if('verified' in patch) upd.verified = !!patch.verified;
   if('credit_type' in patch) upd.credit_type = patch.credit_type || null;
@@ -1161,6 +1224,17 @@ async function updateAttendanceRecord(recordId, patch){
    }
   } else if('time_out' in patch && !upd.time_out){
     if(!('hours' in upd)) upd.hours = 0;
+  }
+
+  // No time in at all (blank or 00:00 – 00:00) → the day rendered no hours and
+  // is an ABSENCE. Force hours 0, status 'absent' and drop any crediting type
+  // so no view can still paint the day green.
+  if('time_in' in patch && !upd.time_in){
+    upd.time_out = null;
+    upd.hours = 0;
+    upd.status = 'absent';
+    const rec0 = window.__DB__.attendance.find(a=>a.id===recordId);
+    if(rec0 && rec0.credit_type && !isAbsentCreditType(rec0.credit_type)) upd.credit_type = 'absent';
   }
 
   const { data, error } = await sb.from('attendance').update(upd).eq('id', recordId).select().single();
