@@ -73,8 +73,12 @@ async function render(){
           <div id="r_who" style="font-weight:700;color:var(--blue-900);margin-bottom:4px"></div>
           <div class="text-muted text-sm" id="r_date" style="margin-bottom:14px"></div>
           <div class="form-row">
-            <div class="form-group"><label for="r_in">Time In</label><input type="time" class="form-control" id="r_in"></div>
-            <div class="form-group"><label for="r_out">Time Out</label><input type="time" class="form-control" id="r_out"></div>
+            <div class="form-group"><label for="r_in">Time In</label>
+              <input type="time" class="form-control" id="r_in">
+              <div class="form-control blank-time" id="r_in_blank" style="display:none">--:-- --</div></div>
+            <div class="form-group"><label for="r_out">Time Out</label>
+              <input type="time" class="form-control" id="r_out">
+              <div class="form-control blank-time" id="r_out_blank" style="display:none">--:-- --</div></div>
           </div>
           <div class="form-group">
             <label for="r_status">Status</label>
@@ -83,6 +87,15 @@ async function render(){
               <option value="late">Late</option>
               <option value="absent">Absent</option>
             </select>
+          </div>
+          <div class="form-group">
+            <label for="r_note">Reason / note (visible to the intern)</label>
+            <input type="text" class="form-control" id="r_note" maxlength="160"
+                   placeholder="e.g. Did not report for duty — no hours credited"
+                   aria-describedby="r_noteHint">
+            <p class="text-sm text-muted" id="r_noteHint" style="margin-top:4px">
+              Shown to the intern beside this day in their attendance history. Leave blank to remove the note.
+            </p>
           </div>
           <p class="text-sm text-muted" id="r_hint" aria-live="polite"></p>
           <div class="form-error" id="r_err" role="alert"></div>
@@ -107,7 +120,8 @@ async function render(){
             when attendance could not be checked), or to grant a rest day, reward, holiday or
             off-site day. The intern does not need to scan — the hours below are still credited
             and the day shows as attended for both the admin and the intern.
-            Choose <strong>Excused (Not Credited)</strong> or <strong>Absent</strong> to record a
+            Choose <strong>Excused (Not Credited)</strong>, <strong>Absent</strong> or
+            <strong>Suspension of work</strong> to record a
             day with no rendered hours: time in / time out are left blank and the day counts as
             an absence everywhere.
           </p>
@@ -136,9 +150,11 @@ async function render(){
           </div>
           <div class="form-row" id="s_timeRow">
             <div class="form-group"><label for="s_tin">Time in</label>
-              <input type="time" class="form-control" id="s_tin" onchange="recalcSchedHours()"></div>
+              <input type="time" class="form-control" id="s_tin" onchange="recalcSchedHours()">
+              <div class="form-control blank-time" id="s_tin_blank" style="display:none">--:-- --</div></div>
             <div class="form-group"><label for="s_tout">Time out</label>
-              <input type="time" class="form-control" id="s_tout" onchange="recalcSchedHours()"></div>
+              <input type="time" class="form-control" id="s_tout" onchange="recalcSchedHours()">
+              <div class="form-control blank-time" id="s_tout_blank" style="display:none">--:-- --</div></div>
           </div>
           <div class="form-group">
             <label for="s_note">Reason / note (visible to the intern)</label>
@@ -238,6 +254,15 @@ function drawRows(){
     </tr>`).join('') || `<tr><td colspan="7" style="text-align:center;color:#888;padding:20px">No ${CURRENT_TAB} records for ${fmtDate(CURRENT_DATE)}.</td></tr>`;
 }
 
+/* Swaps a <input type="time"> for a read-only "--:-- --" display (and back). */
+function showBlankTime(baseId, blank){
+  const input = document.getElementById(baseId);
+  const ph    = document.getElementById(baseId + '_blank');
+  if(!input || !ph) return;
+  input.style.display = blank ? 'none' : '';
+  ph.style.display    = blank ? '' : 'none';
+}
+
 /* ---------- manual modification ---------- */
 function openRecord(id){
   const rec = DAY_ROWS.find(r=>r.id===id); if(!rec) return;
@@ -253,6 +278,7 @@ function openRecord(id){
   const shown = (typeof attendanceDisplay === 'function')
     ? attendanceDisplay(rec, null, {admin:true}).key : (r.status || 'absent');
   document.getElementById('r_status').value = (shown === 'late' ? 'late' : shown === 'absent' ? 'absent' : 'present');
+  document.getElementById('r_note').value = rec.note || '';
   document.getElementById('r_err').textContent = '';
   onRecStatus();
   openModal('recModal');
@@ -269,7 +295,10 @@ function onRecStatus(){
   const absent = (status === 'absent');
   if(absent){ tin.value = ''; tout.value = ''; }
   tin.disabled = absent; tout.disabled = absent;
-  tin.closest('.form-row').style.opacity = absent ? '.55' : '';
+  // An absence never has real times: the inputs are swapped for a read-only
+  // "--:-- --" display so the admin sees exactly what the intern will see.
+  showBlankTime('r_in', absent);
+  showBlankTime('r_out', absent);
   hint.textContent = absent
     ? 'Absent: time in / time out are cleared and 0 hours are credited for this day. The intern sees this day as Absent.'
     : 'Hours are recalculated automatically from time in/out minus the intern\u2019s break.';
@@ -288,7 +317,8 @@ async function saveRecord(){
 
   const btn = document.getElementById('r_save');
   btn.disabled = true; btn.textContent = 'Saving…';
-  const patch = { time_in:tin, time_out:tout, status, verified:true };
+  const note = document.getElementById('r_note').value.trim();
+  const patch = { time_in:tin, time_out:tout, status, verified:true, note };
   if(absent) patch.hours = 0;
   const r = await updateAttendanceRecord(EDIT_RECORD_ID, patch);
   btn.disabled = false; btn.textContent = 'Save Changes';
@@ -340,12 +370,23 @@ function onSchedType(){
   const row  = document.getElementById('s_timeRow');
   const isRegular = (type === 'regular');
   const isAbsence = (typeof isAbsentCreditType === 'function') && isAbsentCreditType(type);
-  row.style.display = isRegular ? '' : 'none';
+  // Absences (Absent / Excused-not-credited / Suspension) still SHOW the time
+  // fields, but as a read-only "--:-- --" so it is obvious that no time in /
+  // time out is recorded for the day. Crediting types keep hiding the row.
+  row.style.display = (isRegular || isAbsence) ? '' : 'none';
+  showBlankTime('s_tin', isAbsence);
+  showBlankTime('s_tout', isAbsence);
+  if(isAbsence){
+    document.getElementById('s_tin').value = '';
+    document.getElementById('s_tout').value = '';
+  }
   const otherRow = document.getElementById('s_otherRow');
   if(otherRow) otherRow.style.display = (type === 'other') ? '' : 'none';
   const note = document.getElementById('s_note');
   note.placeholder = isAbsence
-    ? 'e.g. Did not report for duty — no hours credited'
+    ? (type === 'suspension'
+        ? 'e.g. Suspension of work — Typhoon Signal No. 2'
+        : 'e.g. Did not report for duty — no hours credited')
     : (isRegular
         ? 'e.g. Attendance was not scanned — recorded manually by the admin'
         : 'e.g. Reward rest day for outstanding performance');
@@ -362,7 +403,9 @@ function onSchedType(){
     document.getElementById('s_hint').textContent =
       type === 'excused_uncredited'
         ? 'Excused (Not Credited): the reason is recorded and visible to the intern, but the day counts as Absent with 0 hours and no time in / time out.'
-        : 'Absent: the day is marked Absent with 0 hours and no time in / time out.';
+        : (type === 'suspension'
+            ? 'Suspension of Work: the day is recorded with 0 hours and no time in / time out (--:-- --). The reason below is visible to the intern.'
+            : 'Absent: the day is marked Absent with 0 hours and no time in / time out (--:-- --).');
   } else {
     hoursEl.readOnly = false;
     hoursEl.removeAttribute('aria-readonly');
