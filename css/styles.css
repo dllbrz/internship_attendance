@@ -578,3 +578,16 @@ tbody tr:last-child td{border-bottom:none}
 @media (prefers-reduced-motion: reduce){
   .page-loader-spinner,.page-loader-skeleton span{animation:none}
 }
+
+
+/* Read-only "--:-- --" stand-in shown instead of a time input when a day
+   records no time in / time out (Absent, Excused-not-credited, Suspension). */
+.blank-time{
+  color:#9aa4b2;
+  background:#f6f7f9;
+  letter-spacing:.5px;
+  display:flex;
+  align-items:center;
+  cursor:not-allowed;
+  user-select:none;
+}
