@@ -15,30 +15,47 @@
 <script>
 async function render(){
   await requireAdmin();
-  const anns = window.__DB__.announcements.slice().sort((a,b)=>b.date.localeCompare(a.date));
+  const anns = window.__DB__.announcements.slice()
+    .sort((a,b)=>String(b.publish_at||b.date||'').localeCompare(String(a.publish_at||a.date||'')));
+  const scheduledCount = anns.filter(a=>isAnnouncementScheduled(a)).length;
   document.getElementById('shell').innerHTML = renderSidebar('admin','announcements') + `
     <main class="main">
-      ${renderTopbar('Announcements','Post announcements. They immediately appear for all interns and admins.')}
+      ${renderTopbar('Announcements','Post now or schedule in advance. Interns only see an announcement once its publish date and time has arrived.')}
       <div class="card-grid-2">
         <div class="card">
           <div class="card-head"><div class="card-title">New Announcement</div></div>
           <form onsubmit="post(event)">
             <div class="form-group"><label>Title</label><input class="form-control" id="t" required></div>
             <div class="form-group"><label>Message</label><textarea class="form-control" id="b" rows="5" required></textarea></div>
-            <button class="btn btn-primary">Post Announcement</button>
+            <div class="form-group">
+              <label for="w">Publish</label>
+              <select class="form-control" id="w" onchange="toggleWhen()">
+                <option value="now">Post immediately</option>
+                <option value="later">Schedule for a later date &amp; time</option>
+              </select>
+            </div>
+            <div class="form-group" id="whenRow" style="display:none">
+              <label for="p">Publish date &amp; time</label>
+              <input class="form-control" type="datetime-local" id="p" aria-describedby="pHint">
+              <p class="text-sm text-muted" id="pHint" style="margin-top:4px">Uses your device time zone. Interns see it exactly at this moment.</p>
+            </div>
+            <div class="form-error" id="n_err" role="alert"></div>
+            <button class="btn btn-primary" id="postBtn">Post Announcement</button>
           </form>
         </div>
         <div class="card">
-          <div class="card-head"><div class="card-title">Posted (${anns.length})</div></div>
+          <div class="card-head"><div><div class="card-title">Announcements (${anns.length})</div>
+            <div class="card-subtitle">${scheduledCount} scheduled for later</div></div></div>
           <div id="annList">
-          ${anns.map(a=>`<div class="ann-item">
+          ${anns.map(a=>{ const sched = isAnnouncementScheduled(a); return `<div class="ann-item">
             <div class="ann-actions">
               <button class="btn btn-outline btn-sm" onclick="edit('${a.id}')">Edit</button>
               <button class="btn btn-outline btn-sm" style="color:#c53030;border-color:#c53030" onclick="del('${a.id}')">Delete</button>
             </div>
-            <div style="font-weight:700;color:var(--blue-900)">${escapeHtml(a.title)}</div>
-            <div class="text-sm text-muted">${fmtDate(a.date)} · ${escapeHtml(a.author||'Admin')}</div>
-            <div class="text-sm mt-2">${escapeHtml(a.body)}</div></div>`).join('') || '<div class="text-muted">No announcements yet.</div>'}
+            <div style="font-weight:700;color:var(--blue-900)">${escapeHtml(a.title)}
+              ${sched?'<span class="pill yellow" style="margin-left:6px">Scheduled</span>':'<span class="pill green" style="margin-left:6px">Published</span>'}</div>
+            <div class="text-sm text-muted">${sched?'Publishes ':''}${fmtDateTime(a.publish_at||a.date)} · ${escapeHtml(a.author||'Admin')}</div>
+            <div class="text-sm mt-2">${escapeHtml(a.body)}</div></div>`; }).join('') || '<div class="text-muted">No announcements yet.</div>'}
           </div>
         </div>
       </div>
@@ -60,6 +77,13 @@ async function render(){
             <label for="e_body">Message</label>
             <textarea class="form-control" id="e_body" rows="6"></textarea>
           </div>
+          <div class="form-group">
+            <label for="e_pub">Publish date &amp; time</label>
+            <input class="form-control" type="datetime-local" id="e_pub" aria-describedby="e_pubHint">
+            <p class="text-sm text-muted" id="e_pubHint" style="margin-top:4px">
+              A future date keeps the announcement hidden from interns until then. A past date publishes it right away.
+            </p>
+          </div>
           <div class="form-error" id="e_err" role="alert"></div>
         </div>
         <div class="modal-foot">
@@ -75,11 +99,34 @@ async function post(e){
   e.preventDefault();
   const title = document.getElementById('t').value.trim();
   const body  = document.getElementById('b').value.trim();
+  const err   = document.getElementById('n_err');
+  err.textContent = '';
   if(!title || !body) return;
-  const r = await addAnnouncement(title, body);
-  if(!r.ok){ toast(r.error,'error'); return; }
-  toast('Announcement posted','success');
+  let publishAt = null;
+  if(document.getElementById('w').value === 'later'){
+    const v = document.getElementById('p').value;
+    if(!v){ err.textContent = 'Pick the publish date and time.'; return; }
+    const d = new Date(v);
+    if(isNaN(d)){ err.textContent = 'That publish date and time is not valid.'; return; }
+    publishAt = d.toISOString();
+  }
+  const btn = document.getElementById('postBtn');
+  btn.disabled = true; btn.textContent = 'Saving…';
+  const r = await addAnnouncement(title, body, publishAt);
+  btn.disabled = false; btn.textContent = 'Post Announcement';
+  if(!r.ok){ err.textContent = r.error; return; }
+  toast(publishAt ? 'Announcement scheduled for '+fmtDateTime(publishAt) : 'Announcement posted','success');
   render();
+}
+function toggleWhen(){
+  const later = document.getElementById('w').value === 'later';
+  document.getElementById('whenRow').style.display = later ? '' : 'none';
+  const p = document.getElementById('p');
+  if(later && !p.value){
+    const d = new Date(Date.now() + 60*60*1000);
+    p.value = toLocalInputValue(d.toISOString());
+    p.focus();
+  }
 }
 let EDIT_ID = null;
 function edit(id){
@@ -87,6 +134,7 @@ function edit(id){
   EDIT_ID = id;
   document.getElementById('e_title').value = a.title || '';
   document.getElementById('e_body').value  = a.body || '';
+  document.getElementById('e_pub').value   = toLocalInputValue(a.publish_at || a.created_at);
   document.getElementById('e_err').textContent = '';
   openModal('editModal');
   setTimeout(()=>document.getElementById('e_title').focus(), 50);
@@ -94,12 +142,19 @@ function edit(id){
 async function saveEdit(){
   const title = document.getElementById('e_title').value.trim();
   const body  = document.getElementById('e_body').value.trim();
+  const pub   = document.getElementById('e_pub').value;
   const err   = document.getElementById('e_err');
   if(!title){ err.textContent = 'Title is required.'; return; }
   if(!body){ err.textContent = 'Message is required.'; return; }
+  let publishAt = null;
+  if(pub){
+    const d = new Date(pub);
+    if(isNaN(d)){ err.textContent = 'That publish date and time is not valid.'; return; }
+    publishAt = d.toISOString();
+  }
   const btn = document.getElementById('e_save');
   btn.disabled = true; btn.textContent = 'Saving…';
-  const r = await updateAnnouncement(EDIT_ID, { title, body });
+  const r = await updateAnnouncement(EDIT_ID, { title, body, publish_at: publishAt });
   btn.disabled = false; btn.textContent = 'Save Changes';
   if(!r.ok){ err.textContent = r.error; return; }
   closeModal('editModal');
