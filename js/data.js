@@ -1327,6 +1327,7 @@ const CREDIT_TYPES = [
   { value:'excused',  label:'Excused (credited)' },
   { value:'excused_uncredited', label:'Excused (Not Credited) — counts as Absent' },
   { value:'absent',   label:'Absent (no hours credited)' },
+  { value:'suspension', label:'Suspension of work (no hours credited)' },
   { value:'holiday',  label:'Holiday' },
   { value:'offsite',  label:'Off-site / official business' },
   { value:'makeup',   label:'Make-up duty' },
@@ -1338,10 +1339,11 @@ const CREDIT_WORKED_TYPES = ['regular','makeup','offsite'];
 // Types that mean the intern did NOT render hours that day. The row is stored
 // with 0 hours, no time in/out and status 'absent', so every view (admin +
 // intern), every count and every total treats the day as an absence.
-const CREDIT_ABSENT_TYPES = ['excused_uncredited','absent'];
+const CREDIT_ABSENT_TYPES = ['excused_uncredited','absent','suspension'];
 const CREDIT_ABSENT_LABELS = {
   excused_uncredited: 'Excused (Not Credited)',
-  absent: 'Absent'
+  absent: 'Absent',
+  suspension: 'Suspension of Work'
 };
 function isAbsentCreditType(t){ return CREDIT_ABSENT_TYPES.indexOf(t) >= 0; }
 
