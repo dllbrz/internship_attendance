@@ -17,7 +17,8 @@
 const u=await requireStudent();
 if(u){
   const db=getDB();
-  const anns=db.announcements.slice().sort((a,b)=>b.date.localeCompare(a.date));
+  // Scheduled (future) announcements stay hidden until their publish moment.
+  const anns=publishedAnnouncements();
   const today=getTodayAttendance(u.id);
   const updates=[];
   if(today && today.time_in) updates.push({icon:'',title:'You timed in today at '+fmt12(today.time_in),date:today.date,type:'success'});
@@ -33,7 +34,7 @@ if(u){
         <div class="card"><div class="card-head"><div class="card-title"> Announcements</div><div class="card-subtitle">${anns.length}</div></div>
           ${anns.map(a=>`<div style="padding:14px;border-left:3px solid var(--yellow);background:var(--blue-50);margin-bottom:10px;border-radius:6px">
           <div style="font-weight:700;color:var(--blue-900)">${a.title}</div>
-          <div class="text-sm text-muted">${fmtDate(a.date)} · ${a.author}</div>
+          <div class="text-sm text-muted">${fmtDateTime(a.publish_at||a.date)} · ${a.author}</div>
           <div class="text-sm mt-2">${a.body}</div></div>`).join('') || '<div class="text-muted">No announcements.</div>'}
         </div>
         <div class="card"><div class="card-head"><div class="card-title"> Attendance Updates</div></div>
