@@ -23,7 +23,8 @@ if(user){
   const remaining = 0;
   const pct = Math.min(100, (done/req)*100).toFixed(1);
   const today = getTodayAttendance(user.id);
-  const recent = studentAttendance(user.id).slice(0,5);
+  const allRecords = studentAttendance(user.id);
+  const recent = allRecords.slice(0,5);
 
   document.getElementById('shell').innerHTML = renderSidebar('student','dashboard') + `
     <main class="main">
@@ -61,11 +62,14 @@ if(user){
       </div>
 
       <div class="card">
-        <div class="card-head"><div class="card-title">Recent Attendance</div>
-          <a href="attendance.html" class="btn btn-ghost btn-sm">See all </a></div>
+        <div class="card-head">
+          <div><div class="card-title">Recent Attendance</div>
+            <div class="card-subtitle">Showing ${recent.length} of ${allRecords.length} record(s)</div></div>
+          <a href="attendance.html" class="btn btn-outline btn-sm"
+             aria-label="See all ${allRecords.length} attendance records">See all${allRecords.length?` (${allRecords.length})`:''}</a></div>
         <div class="table-wrap"><table><thead><tr><th>Date</th><th>Time In</th><th>Time Out</th><th>Hours</th><th>Status</th></tr></thead>
-          <tbody>${recent.length?recent.map(r=>`<tr><td>${fmtDate(r.date)}</td><td>${fmt12(r.time_in)}</td><td>${fmt12(r.time_out)}</td><td>${r.hours||'—'}</td>
-          <td><span class="pill ${r.status==='present'?'green':r.status==='late'?'yellow':'red'}">${r.status}</span></td></tr>`).join(''):'<tr><td colspan="5" class="text-center text-muted" style="padding:24px">No records yet.</td></tr>'}</tbody></table></div>
+          <tbody>${recent.length?recent.map(r=>{ const d=attendanceDisplay(r,user); return `<tr><td>${fmtDate(r.date)}</td><td>${fmt12(r.time_in)}</td><td>${fmt12(r.time_out)}</td><td>${d.key==='absent'?'0':(r.hours||'0')}</td>
+          <td><span class="pill ${d.tone}">${d.label}</span></td></tr>`; }).join(''):'<tr><td colspan="5" class="text-center text-muted" style="padding:24px">No records yet.</td></tr>'}</tbody></table></div>
       </div>
     </main>`;
 
