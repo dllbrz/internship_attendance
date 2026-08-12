@@ -18,10 +18,12 @@
 (async()=>{
 const user = await requireStudent();
 if(user){
-  const done = totalHours(user.id);
-  const req = user.required_hours;
-  const remaining = 0;
-  const pct = Math.min(100, (done/req)*100).toFixed(1);
+  const done = Number(totalHours(user.id)) || 0;
+  const req  = Number(user.required_hours) || 0;
+  // Hours the intern still has to render (never negative once the requirement
+  // is completed).
+  const remaining = Math.max(0, +(req - done).toFixed(2));
+  const pct = req > 0 ? Math.min(100, (done/req)*100).toFixed(1) : '0.0';
   const today = getTodayAttendance(user.id);
   const allRecords = studentAttendance(user.id);
   const recent = allRecords.slice(0,5);
@@ -37,7 +39,7 @@ if(user){
         <div class="stat-card green"><div><div class="stat-label">Completed Hours</div>
           <div class="stat-value">${done}</div><div class="stat-meta">of ${req} required</div></div><div class="stat-icon">${STAT_ICONS.hours}</div></div>
         <div class="stat-card yellow"><div><div class="stat-label">Remaining Hours</div>
-          <div class="stat-value">${remaining.toFixed(2)}</div><div class="stat-meta">${(req-remaining>0?Math.ceil(remaining/8):0)} working days left</div></div><div class="stat-icon">${STAT_ICONS.late}</div></div>
+          <div class="stat-value">${remaining.toFixed(2)}</div><div class="stat-meta">${remaining > 0 ? Math.ceil(remaining/8)+' working day(s) left' : 'Required hours completed'}</div></div><div class="stat-icon">${STAT_ICONS.late}</div></div>
         <div class="stat-card"><div><div class="stat-label">Progress</div>
           <div class="stat-value">${pct}%</div><div class="stat-meta">Overall completion</div></div><div class="stat-icon">${STAT_ICONS.progress}</div></div>
       </div>
@@ -46,7 +48,7 @@ if(user){
         <div class="card">
           <div class="card-head"><div><div class="card-title">OJT Progress</div><div class="card-subtitle">Toward your required ${req} hours</div></div></div>
           <div class="ring-progress" style="--pct:${pct}"><div class="ring-inner"><strong>${pct}%</strong><small>Completed</small></div></div>
-          <div class="progress-label mt-4"><span>${done} hrs done</span><strong>${remaining.toFixed(2)} hrs to go</strong></div>
+          <div class="progress-label mt-4"><span>${done.toFixed(2)} hrs done</span><strong>${remaining > 0 ? remaining.toFixed(2)+' hrs to go' : 'All hours completed'}</strong></div>
           <div class="progress-wrap"><div class="progress-bar" style="width:${pct}%"></div></div>
         </div>
         <div class="card">
