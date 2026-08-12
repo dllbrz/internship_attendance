@@ -332,7 +332,8 @@ function onSchedType(){
     hoursEl.value = '0.00';
     hoursEl.readOnly = true;
     hoursEl.setAttribute('aria-readonly','true');
-    if(hoursGroup) hoursGroup.style.opacity = '.6';
+    // No hours can ever be credited for an absence, so the field is hidden.
+    if(hoursGroup) hoursGroup.style.display = 'none';
     document.getElementById('s_hint').textContent =
       type === 'excused_uncredited'
         ? 'Excused (Not Credited): the reason is recorded and visible to the intern, but the day counts as Absent with 0 hours and no time in / time out.'
@@ -340,7 +341,7 @@ function onSchedType(){
   } else {
     hoursEl.readOnly = false;
     hoursEl.removeAttribute('aria-readonly');
-    if(hoursGroup) hoursGroup.style.opacity = '';
+    if(hoursGroup) hoursGroup.style.display = '';
     if(isRegular) recalcSchedHours();
     else onSchedStudentHint();
   }
