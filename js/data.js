@@ -980,6 +980,12 @@ function attendanceDisplay(rec, student, opts){
     return { key:'absent', tone:'red', credited:false, worked:false,
              label: CREDIT_ABSENT_LABELS[rec.credit_type] || 'Absent' };
   }
+  // SAFETY NET: an explicit "absent" status with no time in always wins over a
+  // leftover crediting type, so a day the admin marked Absent can never be
+  // painted as a present/credited day (admin table, intern history, reports).
+  if(rec && rec.status === 'absent' && isBlankTime(rec.time_in)){
+    return { key:'absent', label:'Absent', tone:'red', credited:false, worked:false };
+  }
   if(rec && rec.credit_type){
     const label = rec.credit_type === 'regular'
       ? (forAdmin ? 'Present (manual)' : 'Present')
@@ -1226,6 +1232,8 @@ async function updateAttendanceRecord(recordId, patch){
     if(!('hours' in upd)) upd.hours = 0;
   }
 
+  const rec0 = window.__DB__.attendance.find(a=>a.id===recordId);
+
   // No time in at all (blank or 00:00 – 00:00) → the day rendered no hours and
   // is an ABSENCE. Force hours 0, status 'absent' and drop any crediting type
   // so no view can still paint the day green.
@@ -1233,8 +1241,27 @@ async function updateAttendanceRecord(recordId, patch){
     upd.time_out = null;
     upd.hours = 0;
     upd.status = 'absent';
-    const rec0 = window.__DB__.attendance.find(a=>a.id===recordId);
     if(rec0 && rec0.credit_type && !isAbsentCreditType(rec0.credit_type)) upd.credit_type = 'absent';
+  }
+
+  // BUGFIX (Edit record → Status "Absent" had no effect):
+  // A manually recorded day is stored with credit_type 'regular' (or another
+  // crediting type) and real times. Setting the status to Absent alone left the
+  // crediting type + times in place, so every view kept painting the day
+  // "Present (manual)". Choosing Absent must now always win: the times are
+  // cleared, hours reset to 0 and the crediting type becomes an absence type.
+  if(upd.status === 'absent'){
+    upd.time_in  = null;
+    upd.time_out = null;
+    upd.hours    = 0;
+    const keep = rec0 && rec0.credit_type && isAbsentCreditType(rec0.credit_type);
+    if(!('credit_type' in upd)) upd.credit_type = keep ? rec0.credit_type : 'absent';
+  }
+
+  // Switching a day back from Absent to Present/Late must not keep an absence
+  // credit type, otherwise the row would still render as Absent.
+  if((upd.status === 'present' || upd.status === 'late') && !('credit_type' in upd)){
+    if(rec0 && rec0.credit_type && isAbsentCreditType(rec0.credit_type)) upd.credit_type = 'regular';
   }
 
   const { data, error } = await sb.from('attendance').update(upd).eq('id', recordId).select().single();
@@ -1381,14 +1408,31 @@ async function addScheduledCredit(studentInternId, opts){
     if(user) row.credited_by = user.id;
   } catch(_){}
 
-  const { data, error } = await sb.from('attendance')
+  let { data, error } = await sb.from('attendance')
     .upsert(row, { onConflict:'student_id,date' }).select().single();
+
+  // FALLBACK: some databases were created before 'absent' / 'excused_uncredited'
+  // were added to the credit_type CHECK constraint. Rather than silently losing
+  // the absence, retry once storing the absence WITHOUT credit_type — the row is
+  // still status 'absent' with 0 hours and no times, so it displays as Absent
+  // everywhere. (Run sql/migration-absent-status-fix.sql to get the full label.)
+  if(error && absentType && /credit_type|check constraint|violates/i.test(error.message)){
+    const retryRow = Object.assign({}, row);
+    delete retryRow.credit_type;
+    retryRow.note = retryRow.note || (opts.credit_type === 'excused_uncredited'
+      ? 'Excused (Not Credited)' : 'Marked absent by the admin');
+    const retry = await sb.from('attendance')
+      .upsert(retryRow, { onConflict:'student_id,date' }).select().single();
+    data = retry.data; error = retry.error;
+  }
+
   if(error){
     const msg = /credit_type|note|credited_by/i.test(error.message)
-      ? 'The database is missing the credited-schedule columns. Run sql/migration-credited-schedule.sql in Supabase.'
+      ? 'The database is missing the credited-schedule columns. Run sql/migration-absent-status-fix.sql in Supabase (SQL Editor), then try again.'
       : error.message;
     return { ok:false, error: msg };
   }
+  if(!data) return { ok:false, error:'The schedule could not be saved. Please refresh and try again.' };
   const internIdMap = new Map(window.__DB__.students.map(x=>[x.auth_id, x.id]));
   const mapped = _mapAttendance(data, internIdMap);
   const idx = window.__DB__.attendance.findIndex(a=>a.id===mapped.id);
