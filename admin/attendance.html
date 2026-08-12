@@ -78,7 +78,7 @@ async function render(){
           </div>
           <div class="form-group">
             <label for="r_status">Status</label>
-            <select class="form-control" id="r_status">
+            <select class="form-control" id="r_status" onchange="onRecStatus()">
               <option value="present">Present</option>
               <option value="late">Late</option>
               <option value="absent">Absent</option>
@@ -247,33 +247,58 @@ function openRecord(id){
   document.getElementById('r_date').textContent = fmtDate(r.date);
   document.getElementById('r_in').value = r.time_in || '';
   document.getElementById('r_out').value = r.time_out || '';
-  document.getElementById('r_status').value = r.status || 'absent';
+  // The displayed status is what the admin sees in the table, so the dropdown
+  // opens on the SAME value (a manual "Present (manual)" day opens on Present,
+  // an absence opens on Absent) instead of the raw stored status.
+  const shown = (typeof attendanceDisplay === 'function')
+    ? attendanceDisplay(rec, null, {admin:true}).key : (r.status || 'absent');
+  document.getElementById('r_status').value = (shown === 'late' ? 'late' : shown === 'absent' ? 'absent' : 'present');
   document.getElementById('r_err').textContent = '';
-  document.getElementById('r_hint').textContent = 'Hours are recalculated automatically from time in/out minus the intern\u2019s break.';
+  onRecStatus();
   openModal('recModal');
+}
+
+// Absent = no rendered hours: the time fields are cleared and locked so the
+// saved record can never keep a time in / time out (which used to make the day
+// come back as "Present (manual)").
+function onRecStatus(){
+  const status = document.getElementById('r_status').value;
+  const tin  = document.getElementById('r_in');
+  const tout = document.getElementById('r_out');
+  const hint = document.getElementById('r_hint');
+  const absent = (status === 'absent');
+  if(absent){ tin.value = ''; tout.value = ''; }
+  tin.disabled = absent; tout.disabled = absent;
+  tin.closest('.form-row').style.opacity = absent ? '.55' : '';
+  hint.textContent = absent
+    ? 'Absent: time in / time out are cleared and 0 hours are credited for this day. The intern sees this day as Absent.'
+    : 'Hours are recalculated automatically from time in/out minus the intern\u2019s break.';
 }
 
 async function saveRecord(){
   const err  = document.getElementById('r_err');
-  const tin  = document.getElementById('r_in').value;
-  const tout = document.getElementById('r_out').value;
   const status = document.getElementById('r_status').value;
+  const absent = (status === 'absent');
+  const tin  = absent ? '' : document.getElementById('r_in').value;
+  const tout = absent ? '' : document.getElementById('r_out').value;
 
   if(tout && !tin){ err.textContent = 'A time out needs a time in.'; return; }
   if(tin && tout && tout <= tin){ err.textContent = 'Time out must be later than time in.'; return; }
-  if(status !== 'absent' && !tin){ err.textContent = 'Present/Late records need a time in.'; return; }
+  if(!absent && !tin){ err.textContent = 'Present/Late records need a time in.'; return; }
 
   const btn = document.getElementById('r_save');
   btn.disabled = true; btn.textContent = 'Saving…';
-  const r = await updateAttendanceRecord(EDIT_RECORD_ID, { time_in:tin, time_out:tout, status, verified:true });
+  const patch = { time_in:tin, time_out:tout, status, verified:true };
+  if(absent) patch.hours = 0;
+  const r = await updateAttendanceRecord(EDIT_RECORD_ID, patch);
   btn.disabled = false; btn.textContent = 'Save Changes';
   if(!r.ok){ err.textContent = r.error; return; }
 
   const i = DAY_ROWS.findIndex(x=>x.id===EDIT_RECORD_ID);
   if(i>=0) DAY_ROWS[i] = r.record;
   closeModal('recModal');
-  toast('Record updated.','success');
-  drawRows();
+  toast(absent ? 'Marked as Absent.' : 'Record updated.','success');
+  await loadDate();
 }
 
 /* ---------- deletion (soft delete → Archive) ---------- */
