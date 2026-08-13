@@ -222,15 +222,46 @@ async function saveEmail(){
   }
   const ok = await confirmDialog({
     title: 'Change email address',
-    message: `Send a confirmation link to ${email}? You will keep signing in with your current email until you open that link.`,
-    confirmText: 'Send link'
+    message: `Send a One Time Pin to ${email}? You will be asked to enter that pin to finish the change.`,
+    confirmText: 'Send One Time Pin',
+    danger: false
   });
   if(!ok) return;
   btn.disabled = true; const label = btn.textContent; btn.textContent = 'Sending…';
-  const r = await updateOwnEmail(email);
+  const r = await requestEmailChangeOtp(email);
   btn.disabled = false; btn.textContent = label;
   if(!r.ok){ err.textContent = r.error; return; }
-  toast('Confirmation link sent. Open it from your new inbox to finish the change.','success');
+  toast('One Time Pin sent to '+email+'.','success');
+  await verifyStudentEmailChange(email);
+}
+
+// Pop-up verification: One Time Pin + the word CONFIRM.
+async function verifyStudentEmailChange(email){
+  const err = document.getElementById('f_err');
+  for(;;){
+    const res = await otpConfirmDialog({
+      title: 'Verify your new email address',
+      message: 'We emailed a One Time Pin to '+email+'. Enter the pin, then type CONFIRM to change your email address.',
+      email,
+      confirmText: 'Verify & Change Email',
+      onResend: async () => {
+        const again = await requestEmailChangeOtp(email);
+        toast(again.ok ? 'A new One Time Pin was sent to '+email+'.' : (again.error||'Could not resend the pin.'),
+              again.ok ? 'success' : 'error');
+      }
+    });
+    if(!res){ toast('Email change cancelled. Your current email address is unchanged.','info'); return; }
+    const v = await verifyEmailChangeOtp(email, res.code);
+    if(v.ok){
+      if(err) err.textContent = '';
+      toast('Email address changed to '+email+'.','success');
+      if(typeof ME === 'object' && ME) ME.email = email;
+      closeModal('editModal');
+      render();
+      return;
+    }
+    if(err) err.textContent = v.error;
+  }
 }
 function downloadQR(filename){
   const holder = document.getElementById('qr');
