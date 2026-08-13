@@ -133,6 +133,16 @@ async function render(){
             <label for="s_type">Schedule type</label>
             <select class="form-control" id="s_type" onchange="onSchedType()"></select>
           </div>
+          <div class="form-group">
+            <label for="s_status">Attendance status</label>
+            <select class="form-control" id="s_status" onchange="onSchedStatus()"
+                    aria-describedby="s_statusHint"></select>
+            <p class="text-sm text-muted" id="s_statusHint" style="margin-top:4px">
+              Pick the status shown to the admin and the intern for this day. It can be
+              set for any schedule type. <strong>Absent</strong> always saves the day with
+              no time in / time out and 0 credited hours.
+            </p>
+          </div>
           <div class="form-row">
             <div class="form-group"><label for="s_date">Date</label>
               <input type="date" class="form-control" id="s_date"></div>
@@ -342,6 +352,8 @@ function openSchedule(){
     actives.map(s=>`<option value="${escapeAttr(s.id)}">${escapeHtml(s.name)} — ${escapeHtml(s.id)}</option>`).join('');
   document.getElementById('s_type').innerHTML =
     CREDIT_TYPES.map(t=>`<option value="${t.value}">${t.label}</option>`).join('');
+  document.getElementById('s_status').innerHTML =
+    SCHEDULE_STATUSES.map(t=>`<option value="${t.value}">${t.label}</option>`).join('');
   document.getElementById('s_date').value = CURRENT_DATE || todayStr();
   document.getElementById('s_note').value = '';
   document.getElementById('s_other').value = '';
@@ -365,8 +377,48 @@ function onSchedStudent(){
 
 // "Regular day" = the intern actually reported for duty but nobody scanned,
 // so the admin types the real time in / time out and the hours follow them.
+// The status dropdown is independent of the schedule type, but choosing an
+// absence schedule type pre-selects the matching status for convenience.
+function onSchedStatus(){
+  const statusEl = document.getElementById('s_status');
+  if(!statusEl) return;
+  const status  = statusEl.value;
+  const isAbsentStatus = (status === 'absent');
+  const type = document.getElementById('s_type').value;
+  const isAbsence = ((typeof isAbsentCreditType === 'function') && isAbsentCreditType(type)) || isAbsentStatus;
+  const row = document.getElementById('s_timeRow');
+  const isRegular = (type === 'regular');
+  row.style.display = (isRegular || isAbsence) ? '' : 'none';
+  showBlankTime('s_tin', isAbsence);
+  showBlankTime('s_tout', isAbsence);
+  const hoursEl = document.getElementById('s_hours');
+  const hoursGroup = hoursEl ? hoursEl.closest('.form-group') : null;
+  if(isAbsence){
+    document.getElementById('s_tin').value = '';
+    document.getElementById('s_tout').value = '';
+    hoursEl.value = '0.00';
+    hoursEl.readOnly = true;
+    hoursEl.setAttribute('aria-readonly','true');
+    if(hoursGroup) hoursGroup.style.display = 'none';
+  } else {
+    hoursEl.readOnly = false;
+    hoursEl.removeAttribute('aria-readonly');
+    if(hoursGroup) hoursGroup.style.display = '';
+    if(!hoursEl.value || Number(hoursEl.value) === 0) onSchedStudentHint();
+  }
+}
+
 function onSchedType(){
   const type = document.getElementById('s_type').value;
+  // Pre-select the status that matches the chosen schedule type. The admin can
+  // still change it to anything afterwards.
+  const statusEl = document.getElementById('s_status');
+  if(statusEl){
+    const absenceType = (typeof isAbsentCreditType === 'function') && isAbsentCreditType(type);
+    statusEl.value = absenceType ? 'absent'
+      : (type === 'excused' ? 'excused'
+        : (type === 'regular' || type === 'makeup' || type === 'offsite' ? 'present' : 'credited'));
+  }
   const row  = document.getElementById('s_timeRow');
   const isRegular = (type === 'regular');
   const isAbsence = (typeof isAbsentCreditType === 'function') && isAbsentCreditType(type);
@@ -413,6 +465,7 @@ function onSchedType(){
     if(isRegular) recalcSchedHours();
     else onSchedStudentHint();
   }
+  onSchedStatus();
 }
 
 // Restores the default credited hours + shift hint for a crediting type.
@@ -446,6 +499,7 @@ async function saveSchedule(){
   const date  = document.getElementById('s_date').value;
   const hours = document.getElementById('s_hours').value;
   const type  = document.getElementById('s_type').value;
+  const status = document.getElementById('s_status').value;
   let   note  = document.getElementById('s_note').value;
   if(!date){ err.textContent = 'Pick the date of the schedule.'; return; }
   if(type === 'other'){
@@ -461,8 +515,8 @@ async function saveSchedule(){
   }
   const tin  = document.getElementById('s_tin').value;
   const tout = document.getElementById('s_tout').value;
-  const isAbsence = (typeof isAbsentCreditType === 'function') && isAbsentCreditType(type);
-  if(type === 'regular'){
+  const isAbsence = ((typeof isAbsentCreditType === 'function') && isAbsentCreditType(type)) || status === 'absent';
+  if(type === 'regular' && !isAbsence){
     if(!tin || !tout){ err.textContent = 'Enter the time in and time out for the regular day.'; return; }
     if(tout <= tin){ err.textContent = 'Time out must be later than time in.'; return; }
   }
@@ -479,16 +533,17 @@ async function saveSchedule(){
   const btn = document.getElementById('s_save');
   btn.disabled = true; btn.textContent = 'Saving…';
   const r = await addScheduledCredit(id, isAbsence
-    ? { date, credit_type:type, hours:0, note }
-    : { date, credit_type:type, hours, note,
+    ? { date, credit_type:type, hours:0, note, status:'absent' }
+    : { date, credit_type:type, hours, note, status,
         time_in:tin || undefined, time_out:tout || undefined });
   btn.disabled = false; btn.textContent = 'Save Schedule';
   if(!r.ok){ err.textContent = r.error; return; }
 
   closeModal('schedModal');
-  const savedLabel = type === 'other'
-    ? note.split(' — ')[0]
-    : (isAbsence ? (CREDIT_ABSENT_LABELS[type] || 'Absent') : CREDIT_LABELS[type]);
+  const savedLabel = isAbsence
+    ? 'Absent'
+    : ((SCHEDULE_STATUS_LABELS[status] || 'Present') + ' — ' +
+       (type === 'other' ? note.split(' — ')[0] : CREDIT_LABELS[type]));
   toast(`${savedLabel} saved for ${r.student.name} on ${fmtDate(date)}.`,'success');
   await changeDate(date);
 }
