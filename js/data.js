@@ -394,9 +394,27 @@ async function loginStudent(usernameOrEmail, password){
   return {ok:true, user:data.user};
 }
 async function loginAdmin(usernameOrEmail, password){
-  let email = usernameOrEmail;
-  if(!email.includes('@')) email = usernameOrEmail + '@naic.gov.ph'; // convention
-  const { data, error } = await sb.auth.signInWithPassword({ email, password });
+  const raw = String(usernameOrEmail || '').trim();
+  if(!raw) return {ok:false, error:'Enter your username or email address.'};
+  if(!password) return {ok:false, error:'Enter your password.'};
+  let email = raw;
+  // USERNAME LOGIN: administrators may type either their email address or the
+  // username saved on their profile. The lookup runs through the security
+  // definer function find_admin_email_by_username (see
+  // sql/migration-admin-username-and-schedule-status.sql) so no email address
+  // is ever exposed to anonymous visitors.
+  if(!raw.includes('@')){
+    let resolved = null;
+    try {
+      const { data } = await sb.rpc('find_admin_email_by_username', { _username: raw });
+      if(data) resolved = data;
+    } catch(_){}
+    email = resolved || (raw + '@naic.gov.ph'); // legacy convention fallback
+  }
+  let { data, error } = await sb.auth.signInWithPassword({ email, password });
+  if(error && !raw.includes('@')){
+    return {ok:false, error:'Incorrect username or password. You can also sign in with your email address.'};
+  }
   if(error) return {ok:false, error:error.message};
   _resetNavDepth();
   const { data: roles, error: roleError } = await sb.from('user_roles').select('role').eq('user_id', data.user.id);
@@ -976,6 +994,14 @@ function attendanceDisplay(rec, student, opts){
   // Admin-granted scheduled/credited day (rest day, reward, holiday, ...).
   // Hours are credited even though the intern never scanned, so it always
   // counts as PRESENT and carries its own label.
+  // An explicitly chosen extended status (Excused / Credited / Half day) always
+  // wins, because the admin picked it for that exact day.
+  if(rec && EXTENDED_STATUSES.indexOf(rec.status) >= 0){
+    const worked = Number(rec.hours || 0) > 0;
+    return { key: rec.status === 'excused' ? 'excused' : 'present',
+             label: SCHEDULE_STATUS_LABELS[rec.status] || 'Credited',
+             tone: statusTone(rec.status), credited: worked, worked: worked };
+  }
   if(rec && rec.credit_type && isAbsentCreditType(rec.credit_type)){
     return { key:'absent', tone:'red', credited:false, worked:false,
              label: CREDIT_ABSENT_LABELS[rec.credit_type] || 'Absent' };
@@ -1050,6 +1076,36 @@ async function updateOwnEmail(newEmail){
   const { error } = await sb.auth.updateUser({ email }, { emailRedirectTo: authUrl('') });
   if(error) return {ok:false, error:error.message};
   return {ok:true, pending:email};
+}
+
+// ----------------------------------------------------------------------------
+// EMAIL CHANGE — ONE TIME PIN FLOW
+// Supabase mails BOTH a confirmation link and a 6-digit token for an email
+// change. We only use the token so the whole change happens inside the app:
+//   1) requestEmailChangeOtp(newEmail)  → Supabase mails the pin
+//   2) the UI opens otpConfirmDialog()  → user types the pin + the word CONFIRM
+//   3) verifyEmailChangeOtp(newEmail, pin) → the address is switched
+// Requires the "Change Email Address" template in Supabase to contain
+// {{ .Token }} and "Secure email change" to be OFF (single confirmation).
+// ----------------------------------------------------------------------------
+async function requestEmailChangeOtp(newEmail){
+  return updateOwnEmail(newEmail);
+}
+async function verifyEmailChangeOtp(newEmail, token){
+  const email = String(newEmail || '').trim().toLowerCase();
+  const code  = String(token || '').replace(/\s+/g,'');
+  if(!email) return {ok:false, error:'Missing the new email address.'};
+  if(!code)  return {ok:false, error:'Enter the One Time Pin from your email.'};
+  let { error } = await sb.auth.verifyOtp({ email, token: code, type:'email_change' });
+  if(error){
+    const msg = /expired|invalid/i.test(error.message)
+      ? 'That One Time Pin is invalid or has expired. Send a new code and try again.'
+      : error.message;
+    return {ok:false, error: msg};
+  }
+  // Mirror the confirmed address into profiles so every list stays in sync.
+  try { await syncOwnEmailFromAuth(); } catch(_){}
+  return {ok:true, email};
 }
 
 // Mirrors the confirmed auth email into profiles.email so the UI and admin
@@ -1347,6 +1403,27 @@ const CREDIT_ABSENT_LABELS = {
 };
 function isAbsentCreditType(t){ return CREDIT_ABSENT_TYPES.indexOf(t) >= 0; }
 
+// Attendance status the admin can pick in "Add Schedule for an Intern" and in
+// the Edit dialog — independent of the schedule type.
+const SCHEDULE_STATUSES = [
+  { value:'present',  label:'Present' },
+  { value:'late',     label:'Late' },
+  { value:'absent',   label:'Absent (no hours credited)' },
+  { value:'excused',  label:'Excused' },
+  { value:'credited', label:'Credited' },
+  { value:'half_day', label:'Half day' }
+];
+const SCHEDULE_STATUS_LABELS = SCHEDULE_STATUSES.reduce((m,s)=>(m[s.value]=s.label,m),{});
+// Statuses that are not part of the original present/late/absent set. If the
+// database still uses the old CHECK constraint we store the closest legacy
+// status and keep the real one in the note (see the migration file).
+const EXTENDED_STATUSES = ['excused','credited','half_day'];
+function statusTone(st){
+  if(st === 'absent') return 'red';
+  if(st === 'late' || st === 'excused' || st === 'half_day') return 'yellow';
+  return 'green';
+}
+
 /**
  * Read the intern's saved shift straight from their profile row (the same data
  * shown on the admin Students page) and refresh the local cache, so any default
@@ -1389,17 +1466,22 @@ async function addScheduledCredit(studentInternId, opts){
   if(!opts || !opts.date) return { ok:false, error:'Pick a date for the schedule.' };
   if(!CREDIT_LABELS[opts.credit_type]) return { ok:false, error:'Pick a schedule type.' };
   const absentType = isAbsentCreditType(opts.credit_type);
-  const hours = absentType ? 0 : Number(opts.hours);
+  // The admin now picks the STATUS explicitly, regardless of the schedule type.
+  // Absent (either from the status or from an absence schedule type) always
+  // means: no time in, no time out, zero credited hours.
+  const status = SCHEDULE_STATUS_LABELS[opts.status] ? opts.status : (absentType ? 'absent' : 'present');
+  const noHours = (status === 'absent') || absentType;
+  const hours = noHours ? 0 : Number(opts.hours);
   if(isNaN(hours) || hours < 0 || hours > 24) return { ok:false, error:'Credited hours must be between 0 and 24.' };
 
   const sch = getOfficeSchedule();
   const row = {
     student_id : s.auth_id,
     date       : opts.date,
-    time_in    : absentType ? null : (opts.time_in  || s.expected_time_in  || sch.start_time || '08:00'),
-    time_out   : absentType ? null : (opts.time_out || s.expected_time_out || sch.end_time   || '17:00'),
-    hours      : absentType ? 0 : +hours.toFixed(2),
-    status     : absentType ? 'absent' : 'present',
+    time_in    : noHours ? null : (opts.time_in  || s.expected_time_in  || sch.start_time || '08:00'),
+    time_out   : noHours ? null : (opts.time_out || s.expected_time_out || sch.end_time   || '17:00'),
+    hours      : noHours ? 0 : +hours.toFixed(2),
+    status     : status,
     verified   : true,
     credit_type: opts.credit_type,
     note       : (opts.note || '').trim() || null,
@@ -1418,6 +1500,19 @@ async function addScheduledCredit(studentInternId, opts){
   // the absence, retry once storing the absence WITHOUT credit_type — the row is
   // still status 'absent' with 0 hours and no times, so it displays as Absent
   // everywhere. (Run sql/migration-absent-status-fix.sql to get the full label.)
+  // FALLBACK: databases created before the status CHECK constraint was widened
+  // only accept present / late / absent. Keep the day (and record the chosen
+  // status in the note) instead of losing the entry.
+  if(error && EXTENDED_STATUSES.indexOf(status) >= 0 && /status|check constraint|violates/i.test(error.message)){
+    const legacy = Object.assign({}, row);
+    legacy.status = (status === 'half_day') ? 'present' : (status === 'credited' ? 'present' : 'present');
+    const label = SCHEDULE_STATUS_LABELS[status];
+    legacy.note = legacy.note ? (label + ' — ' + legacy.note) : label;
+    const retryStatus = await sb.from('attendance')
+      .upsert(legacy, { onConflict:'student_id,date' }).select().single();
+    data = retryStatus.data; error = retryStatus.error;
+  }
+
   if(error && absentType && /credit_type|check constraint|violates/i.test(error.message)){
     const retryRow = Object.assign({}, row);
     delete retryRow.credit_type;
