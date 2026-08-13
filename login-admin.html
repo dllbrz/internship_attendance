@@ -21,12 +21,14 @@
   <section class="auth-form">
     <div class="auth-form-inner">
       <h1>Admin Login</h1>
-      <p class="sub">Sign in to manage interns, attendance, schedules, requirements, and announcements.</p>
+      <p class="sub">Sign in with your username or email to manage interns, attendance, schedules, requirements, and announcements.</p>
       <div class="form-success" id="ok" role="status" aria-live="polite"></div>
       <form id="loginForm">
         <div class="form-group">
-          <label for="u">Email</label>
-          <input type="email" class="form-control" id="u" required autofocus autocomplete="username" placeholder="name@naic.gov.ph">
+          <label for="u">Username or Email</label>
+          <input type="text" class="form-control" id="u" required autofocus autocomplete="username"
+                 placeholder="username or name@naic.gov.ph" aria-describedby="uHint">
+          <small class="text-muted text-sm" id="uHint">You can sign in with the username on your admin profile or with your email address.</small>
         </div>
         <div class="form-group">
           <label for="p">Password</label>
