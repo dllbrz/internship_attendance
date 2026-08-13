@@ -232,16 +232,43 @@ async function admSaveEmail(){
   if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){ toast('Enter a valid email address.','error'); input.focus(); return; }
   const ok = await confirmDialog({
     title: 'Change email address',
-    message: `Send a confirmation link to ${email}? Your sign-in email changes only after you click that link.`,
-    confirmText: 'Send Link'
+    message: `Send a One Time Pin to ${email}? You will be asked to enter that pin to finish the change.`,
+    confirmText: 'Send One Time Pin',
+    danger: false
   });
   if(!ok) return;
   const btn = document.getElementById('admEmailBtn');
   if(btn){ btn.disabled = true; btn.textContent = 'Sending…'; }
-  const r = await updateOwnEmail(email);
+  const r = await requestEmailChangeOtp(email);
   if(btn){ btn.disabled = false; btn.textContent = 'Change Email'; }
   if(!r.ok){ toast(r.error,'error'); return; }
-  toast('Confirmation link sent to '+email+'. Click it to finish the change.','success');
+  toast('One Time Pin sent to '+email+'.','success');
+  await verifyAdminEmailChange(email);
+}
+
+// Pop-up verification: One Time Pin + the word CONFIRM.
+async function verifyAdminEmailChange(email){
+  for(;;){
+    const res = await otpConfirmDialog({
+      title: 'Verify your new email address',
+      message: 'We emailed a One Time Pin to '+email+'. Enter the pin, then type CONFIRM to change your email address.',
+      email,
+      confirmText: 'Verify & Change Email',
+      onResend: async () => {
+        const again = await requestEmailChangeOtp(email);
+        toast(again.ok ? 'A new One Time Pin was sent to '+email+'.' : (again.error||'Could not resend the pin.'),
+              again.ok ? 'success' : 'error');
+      }
+    });
+    if(!res){ toast('Email change cancelled. Your current email address is unchanged.','info'); return; }
+    const v = await verifyEmailChangeOtp(email, res.code);
+    if(v.ok){
+      toast('Email address changed to '+email+'.','success');
+      render();
+      return;
+    }
+    toast(v.error,'error');
+  }
 }
 async function admUploadPic(e){
   const f = e.target.files[0]; if(!f) return;
