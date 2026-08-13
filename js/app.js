@@ -387,3 +387,159 @@ function installBackGuard(){
 function resetNavDepth(){ try { sessionStorage.removeItem(NAV_DEPTH_KEY); } catch(_){} }
 
 document.addEventListener('DOMContentLoaded', () => { setTimeout(installBackGuard, 100); });
+
+/* ============================================================================
+   SHOW / HIDE PASSWORD  (system-wide)
+   ----------------------------------------------------------------------------
+   Every <input type="password"> automatically gets an eye button on its right
+   side. Works for markup that is injected later (dashboards render their HTML
+   from JS) because a MutationObserver re-scans the document.
+   Opt out on a single field with  data-no-reveal="1".
+   ========================================================================== */
+const EYE_OPEN_SVG  = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5C21.27 7.61 17 4.5 12 4.5zm0 12A4.5 4.5 0 1 1 16.5 12 4.5 4.5 0 0 1 12 16.5zm0-7A2.5 2.5 0 1 0 14.5 12 2.5 2.5 0 0 0 12 9.5z"/></svg>';
+const EYE_CLOSE_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6.5c3.79 0 7.17 2.13 8.82 5.5a10.6 10.6 0 0 1-2.2 2.93l1.42 1.42A12.6 12.6 0 0 0 23 12C21.27 7.61 17 4.5 12 4.5c-1.4 0-2.74.24-3.98.68l1.65 1.65c.75-.21 1.53-.33 2.33-.33zM3.71 2.29 2.29 3.71l2.6 2.6A12.4 12.4 0 0 0 1 12c1.73 4.39 6 7.5 11 7.5 1.86 0 3.62-.43 5.19-1.2l2.6 2.6 1.42-1.42zM12 17.5c-3.79 0-7.17-2.13-8.82-5.5a10.7 10.7 0 0 1 3.1-3.62l2.02 2.02A3.5 3.5 0 0 0 12 15.5c.5 0 .97-.1 1.4-.29l1.34 1.34c-.86.29-1.78.45-2.74.45z"/></svg>';
+
+function attachPasswordReveal(input){
+  if(!input || input.dataset.revealReady === '1') return;
+  if(input.getAttribute('data-no-reveal') === '1') return;
+  input.dataset.revealReady = '1';
+
+  let wrap = input.parentElement;
+  if(!wrap || !wrap.classList.contains('pw-field')){
+    wrap = document.createElement('div');
+    wrap.className = 'pw-field';
+    input.parentNode.insertBefore(wrap, input);
+    wrap.appendChild(input);
+  }
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'pw-toggle';
+  btn.tabIndex = 0;
+  btn.innerHTML = EYE_OPEN_SVG;
+  btn.setAttribute('aria-label','Show password');
+  btn.setAttribute('aria-pressed','false');
+  btn.title = 'Show password';
+  btn.addEventListener('click', () => {
+    const show = input.type === 'password';
+    input.type = show ? 'text' : 'password';
+    btn.innerHTML = show ? EYE_CLOSE_SVG : EYE_OPEN_SVG;
+    const label = show ? 'Hide password' : 'Show password';
+    btn.setAttribute('aria-label', label);
+    btn.setAttribute('aria-pressed', show ? 'true' : 'false');
+    btn.title = label;
+    try { input.focus({preventScroll:true}); } catch(_){ }
+  });
+  wrap.appendChild(btn);
+}
+
+function installPasswordReveal(root){
+  (root || document).querySelectorAll('input[type="password"]').forEach(attachPasswordReveal);
+}
+document.addEventListener('DOMContentLoaded', () => {
+  installPasswordReveal(document);
+  try {
+    new MutationObserver(muts => {
+      for(const m of muts){
+        m.addedNodes && m.addedNodes.forEach(n => {
+          if(n.nodeType !== 1) return;
+          if(n.matches && n.matches('input[type="password"]')) attachPasswordReveal(n);
+          else installPasswordReveal(n);
+        });
+      }
+    }).observe(document.body, { childList:true, subtree:true });
+  } catch(_){}
+});
+window.installPasswordReveal = installPasswordReveal;
+
+/* ============================================================================
+   ONE-TIME PIN CONFIRMATION DIALOG
+   ----------------------------------------------------------------------------
+   Used when changing the email address (admin + intern). The user types the
+   6-digit code that Supabase mailed to the NEW address, then types the word
+   CONFIRM to authorise the change.
+   Resolves with { code } on submit, or null when cancelled.
+   Options: title, message, email, confirmText, onResend(async fn)
+   ========================================================================== */
+function otpConfirmDialog(opts){
+  opts = opts || {};
+  return new Promise(resolve => {
+    const prev = document.getElementById('__otp_dialog__');
+    if(prev) prev.remove();
+    const wrap = document.createElement('div');
+    wrap.id = '__otp_dialog__';
+    wrap.className = 'confirm-overlay';
+    wrap.setAttribute('role','dialog');
+    wrap.setAttribute('aria-modal','true');
+    wrap.setAttribute('aria-labelledby','__otp_title__');
+    wrap.innerHTML =
+      '<div class="confirm-card otp-card">' +
+        '<div class="confirm-head" id="__otp_title__"></div>' +
+        '<div class="confirm-body">' +
+          '<p id="__otp_msg__" style="margin:0 0 14px"></p>' +
+          '<div class="form-group">' +
+            '<label for="__otp_code__">One Time Pin</label>' +
+            '<input class="form-control otp-input" id="__otp_code__" inputmode="numeric" autocomplete="one-time-code" ' +
+                   'maxlength="10" placeholder="123456" aria-describedby="__otp_codeHint__">' +
+            '<small class="text-muted text-sm" id="__otp_codeHint__">Enter the code from the email we just sent.</small>' +
+          '</div>' +
+          '<div class="form-group">' +
+            '<label for="__otp_word__">Type CONFIRM</label>' +
+            '<input class="form-control" id="__otp_word__" autocomplete="off" placeholder="CONFIRM" aria-describedby="__otp_wordHint__">' +
+            '<small class="text-muted text-sm" id="__otp_wordHint__">Type the word CONFIRM (in capital letters) to apply the change.</small>' +
+          '</div>' +
+          '<div class="form-error" id="__otp_err__" role="alert" aria-live="assertive"></div>' +
+          '<button type="button" class="btn btn-outline btn-sm" data-a="resend" style="display:none">Resend code</button>' +
+        '</div>' +
+        '<div class="confirm-foot">' +
+          '<button type="button" class="btn btn-outline" data-a="no">Cancel</button>' +
+          '<button type="button" class="btn btn-primary" data-a="yes"></button>' +
+        '</div>' +
+      '</div>';
+    wrap.querySelector('#__otp_title__').textContent = opts.title || 'Verify your new email address';
+    wrap.querySelector('#__otp_msg__').textContent = opts.message ||
+      ('We emailed a One Time Pin to ' + (opts.email || 'your new address') + '. Enter it below, then type CONFIRM.');
+    wrap.querySelector('[data-a="yes"]').textContent = opts.confirmText || 'Verify & Change Email';
+    document.body.appendChild(wrap);
+
+    const codeEl = wrap.querySelector('#__otp_code__');
+    const wordEl = wrap.querySelector('#__otp_word__');
+    const errEl  = wrap.querySelector('#__otp_err__');
+    const okBtn  = wrap.querySelector('[data-a="yes"]');
+    const resend = wrap.querySelector('[data-a="resend"]');
+    if(typeof opts.onResend === 'function'){
+      resend.style.display = '';
+      resend.addEventListener('click', async () => {
+        resend.disabled = true; const t = resend.textContent; resend.textContent = 'Sending…';
+        try { await opts.onResend(); } catch(_){ }
+        resend.disabled = false; resend.textContent = t;
+      });
+    }
+    const lastFocus = document.activeElement;
+    const done = v => {
+      document.removeEventListener('keydown', onKey, true);
+      wrap.remove();
+      if(lastFocus && lastFocus.focus) try { lastFocus.focus(); } catch(_){}
+      resolve(v);
+    };
+    const submit = () => {
+      const code = (codeEl.value || '').replace(/\s+/g,'');
+      const word = (wordEl.value || '').trim();
+      errEl.classList.remove('show'); errEl.textContent = '';
+      if(!code){ errEl.textContent = 'Enter the One Time Pin from your email.'; errEl.classList.add('show'); codeEl.focus(); return; }
+      if(word !== 'CONFIRM'){ errEl.textContent = 'Type CONFIRM exactly (all capital letters) to continue.'; errEl.classList.add('show'); wordEl.focus(); return; }
+      done({ code });
+    };
+    const onKey = e => {
+      if(e.key === 'Escape'){ e.stopPropagation(); done(null); }
+      if(e.key === 'Enter'){ e.preventDefault(); submit(); }
+    };
+    document.addEventListener('keydown', onKey, true);
+    okBtn.addEventListener('click', submit);
+    wrap.addEventListener('click', e => {
+      const a = e.target && e.target.getAttribute && e.target.getAttribute('data-a');
+      if(a === 'no' || e.target === wrap) done(null);
+    });
+    setTimeout(()=>codeEl.focus(), 30);
+  });
+}
+window.otpConfirmDialog = otpConfirmDialog;
