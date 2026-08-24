@@ -465,13 +465,43 @@ async function resendSignupOtp(email){
   if(error) return {ok:false, error:error.message};
   return {ok:true};
 }
+function _passwordRecoveryRedirectUrl(){
+  const configuredSite = String(window.PUBLIC_SITE_URL || '').trim().replace(/\/+$/, '');
+  if(configuredSite){
+    try{ return new URL('reset-password.html', configuredSite + '/').href; }catch(_){}
+  }
+  return authUrl('reset-password.html');
+}
+function _passwordRecoveryError(error){
+  const message = String(error && error.message ? error.message : error || '').toLowerCase();
+  const status = Number(error && error.status ? error.status : 0);
+  if(status === 429 || message.includes('rate limit')){
+    return 'Too many reset emails were requested. Please wait a few minutes before trying again.';
+  }
+  if(message.includes('error sending recovery email') || message.includes('smtp')){
+    return 'The password email service is temporarily unavailable. Please contact the system administrator if this continues.';
+  }
+  if(message.includes('network') || message.includes('failed to fetch')){
+    return 'Unable to reach the password service. Check your connection and try again.';
+  }
+  return 'We could not send the reset email right now. Please try again later.';
+}
 async function sendPasswordReset(email){
-  if(!email || !email.includes('@')) return {ok:false, error:'Enter the email address registered to your intern account.'};
-  const { error } = await sb.auth.resetPasswordForEmail(email.trim(), {
-    redirectTo: authUrl('reset-password.html')
-  });
-  if(error) return {ok:false, error:error.message};
-  return {ok:true};
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  if(!normalizedEmail || !normalizedEmail.includes('@')) return {ok:false, error:'Enter the email address registered to your intern account.'};
+  try{
+    const { error } = await sb.auth.resetPasswordForEmail(normalizedEmail, {
+      redirectTo: _passwordRecoveryRedirectUrl()
+    });
+    if(error){
+      console.error('Password recovery request failed:', error);
+      return {ok:false, error:_passwordRecoveryError(error)};
+    }
+    return {ok:true};
+  }catch(error){
+    console.error('Password recovery request failed:', error);
+    return {ok:false, error:_passwordRecoveryError(error)};
+  }
 }
 async function verifyPasswordResetOtp(email, token){
   if(!email || !token) return {ok:false, error:'Email and OTP code are required.'};
