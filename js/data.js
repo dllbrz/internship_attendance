@@ -462,7 +462,10 @@ async function verifySignupOtp(email, token){
 async function resendSignupOtp(email){
   if(!email || !email.includes('@')) return {ok:false, error:'Enter your registered email address.'};
   const { error } = await sb.auth.resend({ type:'signup', email: email.trim(), options:{ emailRedirectTo: authUrl('login-student.html?verified=1') } });
-  if(error) return {ok:false, error:error.message};
+  if(error){
+    console.error('Resend confirmation failed:', error);
+    return {ok:false, error:_authEmailError(error, 'We could not resend the confirmation code right now.')};
+  }
   return {ok:true};
 }
 function _passwordRecoveryRedirectUrl(){
@@ -472,6 +475,27 @@ function _passwordRecoveryRedirectUrl(){
   }
   return authUrl('reset-password.html');
 }
+// Shared friendly wording for any Auth call that has to send an email.
+// Supabase reports SMTP problems as a generic 500 "Error sending ... email";
+// surfacing that raw text to interns is confusing, so we translate it.
+function _authEmailError(error, fallback){
+  const message = String(error && error.message ? error.message : error || '').toLowerCase();
+  const status = Number(error && error.status ? error.status : 0);
+  if(status === 429 || message.includes('rate limit') || message.includes('too many')){
+    return 'Too many emails were requested for this address. Please wait a few minutes and try again.';
+  }
+  if(message.includes('error sending') || message.includes('smtp')){
+    return 'The email service is temporarily unavailable. Please contact the system administrator if this continues.';
+  }
+  if(message.includes('already registered') || message.includes('already been registered')){
+    return 'That email address is already used by another account.';
+  }
+  if(message.includes('network') || message.includes('failed to fetch')){
+    return 'Unable to reach the server. Check your connection and try again.';
+  }
+  return fallback || (error && error.message) || 'Something went wrong. Please try again.';
+}
+
 function _passwordRecoveryError(error){
   const message = String(error && error.message ? error.message : error || '').toLowerCase();
   const status = Number(error && error.status ? error.status : 0);
@@ -1104,7 +1128,10 @@ async function updateOwnEmail(newEmail){
   if(!user) return {ok:false, error:'Not signed in.'};
   if((user.email||'').toLowerCase() === email) return {ok:false, error:'That is already your current email address.'};
   const { error } = await sb.auth.updateUser({ email }, { emailRedirectTo: authUrl('') });
-  if(error) return {ok:false, error:error.message};
+  if(error){
+    console.error('Email change request failed:', error);
+    return {ok:false, error:_authEmailError(error, 'We could not send the One Time Pin right now. Please try again in a few minutes.')};
+  }
   return {ok:true, pending:email};
 }
 
