@@ -5,5 +5,5 @@ window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
 // Used to build admin invitation links so they always open the production
 // domain instead of a protected Vercel preview deployment.
 // >>> CHANGE THIS to your own production domain. <<<
-window.PUBLIC_SITE_URL = "https://internship-attendance-eight.vercel.app";
+window.PUBLIC_SITE_URL = "https://naic-munengrinternship-attendance.vercel.app";
 
