@@ -165,7 +165,7 @@ async function unarchive(id){
   const s = getDB().students.find(x=>x.id===id);
   const ok = await confirmDialog({
     title:'Restore intern',
-    message:`Restore ${s ? s.name : 'this intern'} to the active Students list?`,
+    message:`Restore ${s ? s.name : 'this intern'} to the active Interns list?`,
     confirmText:'Restore'
   });
   if(!ok) return;
