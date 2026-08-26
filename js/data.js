@@ -246,18 +246,28 @@ async function bootstrap(){
   const requirementsQuery = isAdmin
     ? sb.from('requirements').select('*')
     : sb.from('requirements').select('*').eq('student_id', userId);
+  // Admin accounts must NEVER show up in the Interns/Students list, even if a
+  // database trigger auto-created a `profiles` row for them on signup. Only
+  // needed for the admin view (a student session's `profiles` query already
+  // returns just their own row thanks to RLS).
+  const adminIdsQuery = isAdmin
+    ? sb.from('user_roles').select('user_id').eq('role','admin')
+    : Promise.resolve({ data: [], error: null });
 
-  const [profileRes, anncRes, attRes, reqRes] = await Promise.all([
+  const [profileRes, anncRes, attRes, reqRes, adminIdsRes] = await Promise.all([
     sb.from('profiles').select('*'),
     sb.from('announcements').select('*').order('created_at',{ascending:false}),
     attendanceQuery,
-    requirementsQuery
+    requirementsQuery,
+    adminIdsQuery
   ]);
 
   const { data: profiles, error: profileError } = profileRes;
   if(profileError){ console.error('Profile load failed:', profileError); throw profileError; }
-  window.__DB__.students = (profiles||[]).map(_mapProfileRow);
-  const internIdMap = new Map((profiles||[]).map(p=>[p.id, p.intern_id]));
+  const adminIds = new Set(((adminIdsRes && adminIdsRes.data) || []).map(r=>r.user_id));
+  const internProfiles = (profiles||[]).filter(p=>!adminIds.has(p.id));
+  window.__DB__.students = internProfiles.map(_mapProfileRow);
+  const internIdMap = new Map(internProfiles.map(p=>[p.id, p.intern_id]));
 
   // announcements
   const { data: annc, error: annError } = anncRes;
