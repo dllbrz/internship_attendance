@@ -56,7 +56,8 @@ if(user){
           <div class="qr-display"><div id="qr" style="display:inline-block"></div>
             <div style="font-weight:700;color:var(--blue-800)">${user.id}</div>
             <div class="text-muted text-sm">${user.name}</div>
-            <div style="margin-top:10px">
+            <div style="margin-top:10px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
+              <button class="btn btn-outline btn-sm" onclick="viewQR('qr','${user.id}','${escapeAttr(user.name||'')} · ${escapeAttr(user.id||'')}')">View</button>
               <button class="btn btn-primary btn-sm" onclick="downloadQR('${user.id}')">Download QR Code</button>
             </div>
           </div>
