@@ -124,15 +124,18 @@ function applyFilters(){
   const present = list.filter(r=>r.status==='present').length;
   const late = list.filter(r=>r.status==='late').length;
   const absent = list.filter(r=>r.status==='absent').length;
-  const hours = +list.reduce((s,r)=>s+(r.hours||0),0).toFixed(2);
 
   document.getElementById('stats').innerHTML = `
     <div class="stat-card green"><div><div class="stat-label">Present</div><div class="stat-value">${present}</div></div><div class="stat-icon">${STAT_ICONS.present}</div></div>
     <div class="stat-card yellow"><div><div class="stat-label">Late</div><div class="stat-value">${late}</div></div><div class="stat-icon">${STAT_ICONS.late}</div></div>
-    <div class="stat-card red"><div><div class="stat-label">Absent</div><div class="stat-value">${absent}</div></div><div class="stat-icon">${STAT_ICONS.absent}</div></div>
-    <div class="stat-card"><div><div class="stat-label">Hours Rendered</div><div class="stat-value">${hours}</div><div class="stat-meta">${list.length} record(s)</div></div><div class="stat-icon">${STAT_ICONS.hours}</div></div>`;
+    <div class="stat-card red"><div><div class="stat-label">Absent</div><div class="stat-value">${absent}</div></div><div class="stat-icon">${STAT_ICONS.absent}</div></div>`;
 
-  document.getElementById('rows').innerHTML = list.map(r=>`
+  // Uses the same status logic as every other screen (attendance, dashboard,
+  // time card) so a Holiday or Suspension day keeps its exact label here too,
+  // instead of collapsing to a generic "Absent".
+  document.getElementById('rows').innerHTML = list.map(r=>{
+    const d = attendanceDisplay(r, null, { admin:true });
+    return `
     <tr>
       <td>${fmtDate(r.date)}</td>
       <td style="font-weight:700;color:var(--blue-800)">${r.student_id}</td>
@@ -140,8 +143,9 @@ function applyFilters(){
       <td>${fmt12(r.time_in)}</td>
       <td>${fmt12(r.time_out)}</td>
       <td>${r.hours || '—'}</td>
-      <td><span class="pill ${r.status==='present'?'green':r.status==='late'?'yellow':'red'}">${r.status.charAt(0).toUpperCase()+r.status.slice(1)}</span></td>
-    </tr>`).join('') || '<tr><td colspan="7" style="text-align:center;color:#888;padding:16px">No records match the selected filters.</td></tr>';
+      <td><span class="pill ${d.tone}">${escapeHtml(d.label)}</span></td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="7" style="text-align:center;color:#888;padding:16px">No records match the selected filters.</td></tr>';
 
 }
 
@@ -153,12 +157,12 @@ function reportTitle(){
 
 function csv(){
   const rows = [['Date','Intern ID','Name','Time In','Time Out','Hours','Status']];
-  filteredRecords().forEach(r=>rows.push([fmtDate(r.date), r.student_id, nameOf(r.student_id), fmt12(r.time_in), fmt12(r.time_out), r.hours||0, r.status]));
+  filteredRecords().forEach(r=>rows.push([fmtDate(r.date), r.student_id, nameOf(r.student_id), fmt12(r.time_in), fmt12(r.time_out), r.hours||0, attendanceDisplay(r, null, { admin:true }).label]));
   exportCSV('attendance-report.csv', rows);
 }
 function pdf(){
   if(!window.jspdf || !window.jspdf.jsPDF){ toast('PDF library still loading. Try again.','error'); return; }
-  const rows = filteredRecords().map(r=>[fmtDate(r.date), r.student_id, nameOf(r.student_id), fmt12(r.time_in), fmt12(r.time_out), String(r.hours||'—'), r.status.toUpperCase()]);
+  const rows = filteredRecords().map(r=>[fmtDate(r.date), r.student_id, nameOf(r.student_id), fmt12(r.time_in), fmt12(r.time_out), String(r.hours||'—'), attendanceDisplay(r, null, { admin:true }).label.toUpperCase()]);
   exportPDF('attendance-report.pdf', reportTitle(), ['Date','Intern ID','Name','Time In','Time Out','Hours','Status'], rows);
 }
 function prn(){
