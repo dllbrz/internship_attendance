@@ -1160,9 +1160,23 @@ async function verifyEmailChangeOtp(newEmail, token){
       : error.message;
     return {ok:false, error: msg};
   }
-  // Mirror the confirmed address into profiles so every list stays in sync.
-  try { await syncOwnEmailFromAuth(); } catch(_){}
-  return {ok:true, email};
+  // The pin you just entered only confirms the NEW address. If the Supabase
+  // project has "Secure email change" turned ON, the address does not
+  // actually switch over until the OLD inbox also confirms a link Supabase
+  // sent there — verifyOtp still reports success in that case, even though
+  // auth.users.email has not changed yet. Re-read the session so we only
+  // ever tell the user "changed" once it is actually true.
+  const { data:{user} } = await sb.auth.getUser();
+  const applied = !!(user && user.email && user.email.toLowerCase() === email);
+  if(applied){
+    // Mirror the confirmed address into profiles so every list stays in sync.
+    try { await syncOwnEmailFromAuth(); } catch(_){}
+    return {ok:true, applied:true, email};
+  }
+  return {
+    ok:true, applied:false, email,
+    error:'Your new address is confirmed, but this project also requires confirming from your OLD email inbox before the change takes effect. Check your previous email for a "Confirm email change" message and click it to finish — your email will stay as-is until then. (An admin can turn off this second step in Supabase → Authentication → Sign In / Providers → Email → "Secure email change".)'
+  };
 }
 
 // Mirrors the confirmed auth email into profiles.email so the UI and admin
