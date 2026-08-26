@@ -1077,6 +1077,12 @@ function attendanceDisplay(rec, student, opts){
     return { key:'absent', label:'Absent', tone:'red', credited:false, worked:false };
   }
   if(rec && rec.credit_type){
+    // A Holiday with no rendered hours (office declared non-working, nothing
+    // credited) reads as an absence-like day for the intern, so it must keep
+    // the exact word "Holiday" in red — never collapse to plain "Absent".
+    if(rec.credit_type === 'holiday' && !(Number(rec.hours || 0) > 0)){
+      return { key:'absent', label:'Holiday', tone:'red', credited:false, worked:false };
+    }
     const label = rec.credit_type === 'regular'
       ? (forAdmin ? 'Present (manual)' : 'Present')
       : (rec.credit_type === 'other'
