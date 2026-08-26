@@ -33,7 +33,7 @@ if(user){
       ${renderTopbar('Welcome, '+user.name.split(' ')[0]+'!','Here is your OJT snapshot for today.')}
       <div class="stat-grid">
         <div class="stat-card"><div><div class="stat-label">Today's Status</div>
-          <div class="stat-value">${today?today.status.toUpperCase():'NOT IN'}</div>
+          <div class="stat-value">${today?attendanceDisplay(today,user).label.toUpperCase():'NOT IN'}</div>
           <div class="stat-meta">Status for ${fmtDate(todayStr())}</div></div>
           <div class="stat-icon">${STAT_ICONS.status}</div></div>
         <div class="stat-card green"><div><div class="stat-label">Completed Hours</div>
