@@ -540,8 +540,10 @@ async function saveSchedule(){
   if(!r.ok){ err.textContent = r.error; return; }
 
   closeModal('schedModal');
+  // Keep the specific schedule type (Holiday, Suspension of Work, ...) in the
+  // confirmation instead of collapsing every uncredited day to plain "Absent".
   const savedLabel = isAbsence
-    ? 'Absent'
+    ? (type === 'other' ? note.split(' — ')[0] : (CREDIT_LABELS[type] || 'Absent'))
     : ((SCHEDULE_STATUS_LABELS[status] || 'Present') + ' — ' +
        (type === 'other' ? note.split(' — ')[0] : CREDIT_LABELS[type]));
   toast(`${savedLabel} saved for ${r.student.name} on ${fmtDate(date)}.`,'success');
