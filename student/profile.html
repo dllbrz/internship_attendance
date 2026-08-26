@@ -316,6 +316,9 @@ async function removePic(){
 // Intentionally intern-only: no Rate/Amount/Deductions/Net Pay fields like an
 // employee payroll card. Summary only counts Present / Absent (no "Late") per
 // office policy — the daily table below still shows each day's real status.
+// The header block (banner + intern info + Summary/Present/Absent) repeats on
+// EVERY page of the PDF, not just the first, so a multi-page card is always
+// self-identifying.
 function generateTimeCard(){
   const u = ME; if(!u){ toast('Not ready','error'); return; }
   if(!window.jspdf || !window.jspdf.jsPDF){ toast('PDF library still loading. Try again.','error'); return; }
@@ -326,54 +329,92 @@ function generateTimeCard(){
   const M = 14; // left/right margin
   const shortDate = iso => { if(!iso) return '—'; const d=new Date(iso);
     return d.toLocaleDateString('en-US',{month:'2-digit',day:'2-digit'}); };
+  // "8:00 am" / "1:00 pm" — space before, lowercase am/pm, as used everywhere else in the card.
   const shortTime = t => { if(isBlankTime(t)) return '--:--'; const [h,m]=String(t).split(':').map(Number);
-    const ap=h>=12?'p':'a'; const hh=((h+11)%12)+1; return `${hh}:${String(m).padStart(2,'0')}${ap}`; };
-
-  doc.setFillColor(10,31,68); doc.rect(0,0,W,46,'F');
-  doc.setTextColor(253,194,43); doc.setFontSize(10.5); doc.text('OFFICIAL TIME CARD', M, 19);
-  doc.setTextColor(255,255,255); doc.setFontSize(6.8);
-  doc.text('Municipal Engineering Office', M, 30);
-  doc.text('OJT Program', M, 39);
-
-  doc.setTextColor(20,20,20); doc.setFontSize(7.3);
-  let y = 62;
-  const row = (label,value)=>{ doc.setFont(undefined,'bold'); doc.text(label,M,y);
-    doc.setFont(undefined,'normal');
-    const lines = doc.splitTextToSize(String(value||'—'), W-M-60);
-    doc.text(lines,62,y); y += 10*lines.length; };
-  row('Name:',u.name); row('Intern ID:',u.id); row('School:',u.school);
-  row('Course:',u.course); row('Adviser:',u.adviser_name);
-  row('OJT Period:',`${fmtDate(u.start_date)} – ${fmtDate(u.end_date)}`);
-  row('Req. Hours:',`${u.required_hours} hrs`);
+    const ap=h>=12?'pm':'am'; const hh=((h+11)%12)+1; return `${hh}:${String(m).padStart(2,'0')} ${ap}`; };
 
   const list = studentAttendance(u.id).slice().reverse();
   const rendered = totalHours(u.id);
   const present = list.filter(r=>r.status==='present').length;
   const absent = list.filter(r=>r.status==='absent').length;
 
-  y+=3; doc.setDrawColor(210,215,225); doc.line(M,y,W-M,y); y+=11;
-  doc.setFont(undefined,'bold'); doc.setFontSize(7.6); doc.text('SUMMARY',M,y); y+=10;
-  doc.setFont(undefined,'normal'); doc.setFontSize(7.3);
-  doc.text(`Hours Rendered: ${rendered} / ${u.required_hours}`,M,y); y+=10;
-  doc.text(`Present: ${present}    Absent: ${absent}`,M,y);
+  // Draws the navy banner + intern info + Summary block. Deterministic for a
+  // given intern (same content -> same wrapped height), so it is safe to call
+  // once per page and reuse the same returned Y as every page's table margin.
+  function drawHeader(){
+    doc.setFillColor(10,31,68); doc.rect(0,0,W,46,'F');
+    doc.setTextColor(253,194,43); doc.setFontSize(10.5); doc.text('OFFICIAL TIME CARD', M, 19);
+    doc.setTextColor(255,255,255); doc.setFontSize(6.8);
+    doc.text('Municipal Engineering Office', M, 30);
+    doc.text('OJT Program', M, 39);
 
-  const body = list.map(r=>[shortDate(r.date),shortTime(r.time_in),shortTime(r.time_out),
-    Number(r.hours||0).toFixed(1),(r.status||'').slice(0,4).toUpperCase()]);
-  doc.autoTable({ startY:y+9, head:[['Date','In','Out','Hrs','Stat']],
-    body: body.length?body:[['—','—','—','—','—']], theme:'grid',
-    margin:{left:M,right:M},
+    doc.setTextColor(20,20,20); doc.setFontSize(7.3);
+    let y = 62;
+    const row = (label,value)=>{ doc.setFont(undefined,'bold'); doc.text(label,M,y);
+      doc.setFont(undefined,'normal');
+      const lines = doc.splitTextToSize(String(value||'—'), W-M-70);
+      doc.text(lines,72,y); y += 10*lines.length; };
+    row('Name:',u.name); row('Intern ID:',u.id); row('School:',u.school);
+    row('Course:',u.course); row('OJT Supervisor:',u.adviser_name);
+    row('OJT Period:',`${fmtDate(u.start_date)} – ${fmtDate(u.end_date)}`);
+    row('Req. Hours:',`${u.required_hours} hrs`);
+
+    y+=3; doc.setDrawColor(210,215,225); doc.line(M,y,W-M,y); y+=11;
+    doc.setFont(undefined,'bold'); doc.setFontSize(7.6); doc.text('SUMMARY',M,y); y+=10;
+    doc.setFont(undefined,'normal'); doc.setFontSize(7.3);
+    doc.text(`Hours Rendered: ${rendered} / ${u.required_hours}`,M,y); y+=10;
+    doc.text(`Present: ${present}    Absent: ${absent}`,M,y);
+    return y;
+  }
+
+  // Draw once (page 1) so we know exactly how tall the header is for THIS
+  // intern's data, then reuse that height as the top margin on every page.
+  const headerBottom = drawHeader();
+  const startY = headerBottom + 9;
+
+  const body = list.map(r=>{
+    // Reuses the same status logic as every other screen in the app, so
+    // Present / Absent / Late / Excused / Credited / Half day / Holiday are
+    // always spelled out in full — never truncated abbreviations.
+    const disp = attendanceDisplay(r, u, { admin:false });
+    return [shortDate(r.date), shortTime(r.time_in), shortTime(r.time_out),
+      Number(r.hours||0).toFixed(1), (disp.label||'').toUpperCase()];
+  });
+
+  doc.autoTable({
+    startY,
+    head:[['Date','In','Out','Hours','Status']],
+    body: body.length?body:[['—','—','—','—','—']],
+    theme:'grid',
+    margin:{ top:startY, left:M, right:M, bottom:34 },
+    showHead:'everyPage',
     headStyles:{fillColor:[13,43,107],textColor:255,fontSize:6.6,halign:'center',cellPadding:2},
-    styles:{fontSize:6.3,cellPadding:2,halign:'center'},
-    columnStyles:{0:{halign:'left',cellWidth:38},1:{cellWidth:34},2:{cellWidth:34},
+    styles:{fontSize:6.1,cellPadding:2,halign:'center'},
+    columnStyles:{0:{halign:'left',cellWidth:34},1:{cellWidth:38},2:{cellWidth:38},
       3:{cellWidth:26},4:{cellWidth:'auto'}},
-    alternateRowStyles:{fillColor:[242,247,255]} });
+    alternateRowStyles:{fillColor:[242,247,255]},
+    // Repeats the full header (banner + intern info + Summary) on every page
+    // after the first — page 1's header was already drawn above.
+    didDrawPage: (data) => { if(data.pageNumber > 1) drawHeader(); }
+  });
 
-  const sigY = Math.min(H-40, (doc.lastAutoTable?doc.lastAutoTable.finalY:y)+26);
+  // Signature block + "Generated" stamp always go on the LAST page, right
+  // after wherever the table actually ended.
+  const pageCount = doc.internal.getNumberOfPages();
+  doc.setPage(pageCount);
+  const sigY = Math.min(H-40, (doc.lastAutoTable ? doc.lastAutoTable.finalY : startY) + 26);
   doc.setFontSize(6.8); doc.setTextColor(20,20,20);
-  doc.line(M+4,sigY,W/2-6,sigY); doc.line(W/2+6,sigY,W-M-4,sigY);
-  doc.text('Intern',M+16,sigY+9); doc.text('Adviser',W/2+18,sigY+9);
+  const leftX1 = M+4, leftX2 = W/2-6, rightX1 = W/2+6, rightX2 = W-M-4;
+  doc.line(leftX1,sigY,leftX2,sigY); doc.line(rightX1,sigY,rightX2,sigY);
+  // Centered under each signature line (not left-aligned).
+  doc.text('Intern', (leftX1+leftX2)/2, sigY+9, { align:'center' });
+  doc.text('OJT Supervisor', (rightX1+rightX2)/2, sigY+9, { align:'center' });
   doc.setFontSize(5.8); doc.setTextColor(120,120,120);
-  doc.text('Generated '+new Date().toLocaleDateString(),M,H-8);
+  const stamp = new Date();
+  const stampText = 'Generated ' + stamp.toLocaleDateString() + ', ' +
+    stamp.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+  doc.text(stampText, M, H-8);
+
   doc.save(`time-card-${u.id}.pdf`); toast('Time card generated.','success');
 }
 
