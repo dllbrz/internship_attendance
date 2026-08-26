@@ -6,6 +6,8 @@
 // Actions (POST JSON body):
 //   { action: "list" }
 //   { action: "create", email, password, full_name }
+//     Creates a confirmed admin account with the given password, then emails
+//     the new administrator their sign-in email + that exact password.
 //   { action: "invite", email, full_name, redirect_to, site_url }
 //   { action: "complete_setup", full_name, position, contact, password }
 //   { action: "send_credentials", full_name }
@@ -272,7 +274,29 @@ Deno.serve(async (req) => {
         await admin.auth.admin.deleteUser(newId);
         return json({ error: roleInsErr.message }, 500);
       }
-      return json({ ok: true, user_id: newId });
+
+      // Email the new administrator their sign-in email + the exact password
+      // the inviting admin just set, so they never have to be told it verbally.
+      const LOGIN_URL = Deno.env.get("ADMIN_LOGIN_URL") || "";
+      const greeting = full_name ? `Hi ${full_name},` : "Hi there,";
+      const html = mailShell({
+        kicker: "Municipality of Naic \u00b7 Engineering Office",
+        heading: "Your administrator account is ready",
+        body:
+          `<p>${greeting}</p>
+           <p>An administrator created an account for you on the <strong>OJT Attendance &amp; Internship Monitoring System</strong>. Use the details below for your first sign-in:</p>
+           <table style="border-collapse:collapse;margin:18px 0;font-size:15px">
+             <tr><td style="padding:6px 16px 6px 0;color:#6b7280">Email</td><td style="font-weight:700">${email}</td></tr>
+             <tr><td style="padding:6px 16px 6px 0;color:#6b7280">Password</td><td style="font-weight:700;font-family:ui-monospace,Menlo,monospace;font-size:16px">${password}</td></tr>
+           </table>
+           <p style="color:#b45309"><strong>Please change this password</strong> after signing in, under Account &rarr; Change Password.</p>`,
+        ctaLabel: "Sign in now",
+        ctaUrl: LOGIN_URL,
+        footnote: "Not expecting this email? Contact the Engineering Office right away.",
+      });
+      const mail = await sendAdminMail(email, "Your administrator sign-in details", html);
+
+      return json({ ok: true, user_id: newId, emailed: mail.emailed, reason: mail.reason });
     }
 
     // Email an invitation link instead of setting a password manually.
