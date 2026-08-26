@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Students — Admin · Naic OJT</title>
+<title>Interns — Admin · Naic OJT</title>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="../css/styles.css">
 </head>
@@ -18,12 +18,12 @@ async function render(){
   const students = window.__DB__.students.filter(s=>s.active);
   document.getElementById('shell').innerHTML = renderSidebar('admin','students') + `
     <main class="main">
-      ${renderTopbar('Students', 'Manage active OJT interns. Newly registered accounts appear here automatically.')}
+      ${renderTopbar('Interns', 'Manage active OJT interns. Newly registered accounts appear here automatically.')}
       <div class="card">
         <div class="card-title">Active Interns (${students.length})</div>
         <div class="table-wrap">
-          <table class="table">
-            <thead><tr><th>ID</th><th>Name</th><th>School</th><th>Course</th><th>Period</th><th>Hrs</th><th>Documents</th><th></th></tr></thead>
+          <table class="table intern-table">
+            <thead><tr><th>ID</th><th>Name</th><th>School</th><th>Course</th><th>Period</th><th>Hours</th><th>Documents</th><th></th></tr></thead>
             <tbody id="rows"></tbody>
           </table>
         </div>
@@ -103,25 +103,28 @@ function drawRows(){
     const n = (s.requirements||[]).length;
     return `
     <tr>
-      <td style="font-weight:700;color:var(--blue-800)">${s.id}</td>
-      <td>
+      <td class="col-id">${s.id}</td>
+      <td class="col-name">
         <div class="cell-name">
           ${profileIconHTML(s, 34)}
           <span class="name-text">${s.name}</span>
         </div>
       </td>
-      <td>${s.school||'—'}</td>
-      <td>${s.course||'—'}</td>
-      <td>${fmtDate(s.start_date)} – ${fmtDate(s.end_date)}<div class="text-muted text-sm">${fmt12(s.expected_time_in)} – ${fmt12(s.expected_time_out)} · ${s.break_minutes||0}m break</div></td>
-      <td>${s.required_hours}</td>
-      <td><button class="btn btn-outline btn-sm" onclick="viewDocs('${s.id}')">View (${n})</button></td>
-      <td style="white-space:nowrap">
+      <td class="col-wrap">${s.school||'—'}</td>
+      <td class="col-wrap">${s.course||'—'}</td>
+      <td class="col-period">
+        <div class="period-dates">${fmtDate(s.start_date)} – ${fmtDate(s.end_date)}</div>
+        <div class="text-muted text-sm period-shift">${fmt12(s.expected_time_in)} – ${fmt12(s.expected_time_out)} · ${s.break_minutes||0}m break</div>
+      </td>
+      <td class="col-hours">${s.required_hours}</td>
+      <td class="col-docs"><button class="btn btn-outline btn-sm" onclick="viewDocs('${s.id}')">View (${n})</button></td>
+      <td class="col-actions">
         <button class="btn btn-outline btn-sm" onclick="viewProfile('${s.id}')">View Profile</button>
         <button class="btn btn-outline btn-sm" onclick="openEdit('${s.id}')">Edit</button>
         <button class="btn btn-outline btn-sm" style="color:#c53030;border-color:#c53030" onclick="archive('${s.id}')">Archive</button>
       </td>
     </tr>`;
-  }).join('') || '<tr><td colspan="8" style="text-align:center;color:#888">No active students yet.</td></tr>';
+  }).join('') || '<tr><td colspan="8" style="text-align:center;color:#888">No active interns yet.</td></tr>';
 }
 function openEdit(id){
   const s = window.__DB__.students.find(x=>x.id===id); if(!s) return;
