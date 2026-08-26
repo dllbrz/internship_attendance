@@ -403,7 +403,7 @@ tbody tr:last-child td{border-bottom:none}
 .intern-table th,.intern-table td{vertical-align:middle}
 .intern-table .col-id{font-weight:700;color:var(--blue-800);white-space:nowrap}
 .intern-table .col-name{min-width:160px}
-.intern-table .col-wrap{max-width:160px;white-space:normal;word-break:break-word;line-height:1.35}
+.intern-table .col-wrap{min-width:200px;max-width:280px;white-space:normal;word-break:normal;overflow-wrap:break-word;line-height:1.5}
 .intern-table .col-period{min-width:170px;line-height:1.4}
 .intern-table .col-period .period-dates{white-space:nowrap;font-weight:600;color:var(--gray-700)}
 .intern-table .col-period .period-shift{margin-top:3px}
