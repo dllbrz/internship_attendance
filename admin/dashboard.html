@@ -23,8 +23,6 @@ if(admin){
   const present = todayRecs.filter(a=>a.status==='present').length;
   const late = todayRecs.filter(a=>a.status==='late').length;
   const absent = activeStudents.length - todayRecs.length;
-  const totalHrs = +db.attendance.reduce((s,a)=>s+(a.hours||0),0).toFixed(2);
-
 
   document.getElementById('shell').innerHTML = renderSidebar('admin','dashboard') + `
     <main class="main">
@@ -37,8 +35,7 @@ if(admin){
       </div>
 
 
-      <div class="card"><div class="card-head"><div><div class="card-title">Attendance Progress</div><div class="card-subtitle">Toward each intern's required hours</div></div>
-      <div class="text-sm text-muted">Total hours rendered (all): <strong style="color:var(--blue-800)">${totalHrs}</strong></div></div>
+      <div class="card"><div class="card-head"><div><div class="card-title">Attendance Progress</div><div class="card-subtitle">Toward each intern's required hours</div></div></div>
       ${activeStudents.map(s=>{const done=totalHours(s.id);const pct=Math.min(100,(done/s.required_hours)*100).toFixed(0);
         return `<div style="margin-bottom:10px"><div class="progress-label"><span>${s.name} <span class="text-muted">(${s.id})</span></span><strong>${done}/${s.required_hours} (${pct}%)</strong></div><div class="progress-wrap"><div class="progress-bar" style="width:${pct}%"></div></div></div>`;}).join('')}
       </div>
