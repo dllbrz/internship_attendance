@@ -47,8 +47,8 @@ async function render(){
             <button class="btn btn-yellow btn-sm" onclick="prn()"> Print</button>
           </div></div>
         <div class="table-wrap"><table id="tbl"><thead><tr><th>Date</th><th>Time In</th><th>Time Out</th><th>Hours</th><th>Status</th></tr></thead>
-        <tbody>${list.map(r=>`<tr><td>${fmtDate(r.date)}</td><td>${fmt12(r.time_in)}</td><td>${fmt12(r.time_out)}</td><td>${r.hours||'—'}</td>
-        <td><span class="pill ${r.status==='present'?'green':r.status==='late'?'yellow':'red'}">${r.status}</span></td></tr>`).join('')}</tbody></table></div>
+        <tbody>${list.map(r=>{ const d=attendanceDisplay(r,u); return `<tr><td>${fmtDate(r.date)}</td><td>${fmt12(r.time_in)}</td><td>${fmt12(r.time_out)}</td><td>${r.hours||'—'}</td>
+        <td><span class="pill ${d.tone}">${escapeHtml(d.label)}</span></td></tr>`; }).join('')}</tbody></table></div>
       </div>
     </main>`;
 
@@ -58,8 +58,8 @@ async function render(){
     datasets:[{label:'Hours',data:last14.map(r=>r.hours||0),backgroundColor:'#123a8a',borderRadius:6}]},
     options:{plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,max:10}}}});
 }
-async function csv(){ const u=await requireStudent(); const rows=[['Date','Time In','Time Out','Hours','Status']]; studentAttendance(u.id).forEach(r=>rows.push([fmtDate(r.date),fmt12(r.time_in),fmt12(r.time_out),r.hours||0,r.status])); exportCSV('report-'+u.id+'.csv',rows);}
-async function pdf(){ const u=await requireStudent(); const rows=studentAttendance(u.id).map(r=>[fmtDate(r.date),fmt12(r.time_in),fmt12(r.time_out),r.hours||'—',r.status.toUpperCase()]); exportPDF('report-'+u.id+'.pdf','Personal Attendance Report — '+u.name,['Date','Time In','Time Out','Hours','Status'],rows);}
+async function csv(){ const u=await requireStudent(); const rows=[['Date','Time In','Time Out','Hours','Status']]; studentAttendance(u.id).forEach(r=>rows.push([fmtDate(r.date),fmt12(r.time_in),fmt12(r.time_out),r.hours||0,attendanceDisplay(r,u).label])); exportCSV('report-'+u.id+'.csv',rows);}
+async function pdf(){ const u=await requireStudent(); const rows=studentAttendance(u.id).map(r=>[fmtDate(r.date),fmt12(r.time_in),fmt12(r.time_out),r.hours||'—',attendanceDisplay(r,u).label.toUpperCase()]); exportPDF('report-'+u.id+'.pdf','Personal Attendance Report — '+u.name,['Date','Time In','Time Out','Hours','Status'],rows);}
 async function prn(){ printReport('Attendance Report — '+(await requireStudent()).name, document.getElementById('tbl').outerHTML);}
 render();
   subscribeRealtime(() => render());
