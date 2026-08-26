@@ -66,16 +66,16 @@ function renderSidebar(kind, active){
     {icon:ICONS.report,label:'Reports',href:'reports.html',key:'reports'},
     {icon:ICONS.bell,label:'Notifications',href:'notifications.html',key:'notifications'},
   ] : [
-    {group:'Account'},
-    {icon:ICONS.settings,label:'Account',href:'account.html',key:'account'},
     {group:'Main'},
     {icon:ICONS.dashboard,label:'Dashboard',href:'dashboard.html',key:'dashboard'},
-    {icon:ICONS.student,label:'Students',href:'students.html',key:'students'},
+    {icon:ICONS.student,label:'Interns',href:'students.html',key:'students'},
     {icon:ICONS.clock,label:'Attendance',href:'attendance.html',key:'attendance'},
     {icon:ICONS.camera,label:'Scanner',href:'scanner.html',key:'scanner'},
     {icon:ICONS.archive,label:'Archived',href:'archived.html',key:'archived'},
     {icon:ICONS.report,label:'Reports',href:'reports.html',key:'reports'},
     {icon:ICONS.megaphone,label:'Announcements',href:'announcements.html',key:'announcements'},
+    {group:'Account'},
+    {icon:ICONS.settings,label:'Account',href:'account.html',key:'account'},
   ];
 
   const user = window.__DB__.currentUser || { name:'User', id:'', avatar:null };
