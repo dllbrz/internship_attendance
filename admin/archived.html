@@ -212,13 +212,14 @@ function drawDeleted(){
   body.innerHTML = DELETED.map(a=>{
     const s = getDB().students.find(x=>x.id===a.student_id);
     const name = s ? s.name : '—';
+    const d = attendanceDisplay(a, s, { admin:true });
     return `<tr>
       <td>${fmtDate(a.date)}</td>
       <td style="font-weight:700;color:var(--blue-800)">${escapeHtml(a.student_id)}</td>
       <td>${escapeHtml(name)}</td>
       <td>${fmt12(a.time_in)}</td>
       <td>${fmt12(a.time_out)}</td>
-      <td><span class="badge badge-${a.status}">${a.status.charAt(0).toUpperCase()+a.status.slice(1)}</span></td>
+      <td><span class="badge badge-${d.key}">${escapeHtml(d.label)}</span></td>
       <td style="text-align:right;white-space:nowrap">
         <button class="btn-icon" onclick="restoreRec('${escapeAttr(a.id)}')" title="Restore record" aria-label="Restore ${escapeAttr(name)} record for ${fmtDate(a.date)}">${ICONS.restore}</button>
         <button class="btn-icon danger" onclick="purgeRec('${escapeAttr(a.id)}')" title="Delete permanently" aria-label="Permanently delete ${escapeAttr(name)} record for ${fmtDate(a.date)}">${ICONS.trash}</button>
