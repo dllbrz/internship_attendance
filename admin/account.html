@@ -12,6 +12,7 @@
 <script src="../js/supabase-config.js"></script>
 <script src="../js/data.js"></script>
 <script src="../js/app.js"></script>
+<script src="../js/image-crop.js"></script>
 <script>
 let CURRENT_ADMIN = null;
 let ADMINS = [];
@@ -44,15 +45,29 @@ async function render(){
               <small class="text-muted text-sm" id="admEmailHint">A confirmation link is sent to the new address. Sign in with your current email until you confirm it.</small>
             </div>
           </div>
-          <div style="display:flex;flex-direction:column;gap:8px">
+          <div>
             <input type="file" id="admPic" accept="image/*" style="display:none" onchange="admUploadPic(event)">
-            <button class="btn btn-outline btn-sm" onclick="document.getElementById('admPic').click()">Upload / Change Photo</button>
-            <button class="btn btn-outline btn-sm" style="color:#c53030;border-color:#c53030"
-                    id="delPicBtn" onclick="admDelPic()"
-                    aria-label="Delete profile photo">Delete Photo</button>
-            <button class="btn btn-primary btn-sm" onclick="admSaveName()">Save Name</button>
-            <button class="btn btn-outline btn-sm" id="admEmailBtn" onclick="admSaveEmail()">Change Email</button>
+            <button class="btn btn-primary btn-sm" onclick="openModal('admProfileMenuModal')">Edit Profile</button>
           </div>
+        </div>
+      </div>
+
+      <!-- Single "Edit Profile" entry point → pop-up with the 4 profile actions -->
+      <div class="modal" id="admProfileMenuModal" role="dialog" aria-modal="true" aria-label="Edit profile options">
+        <div class="modal-inner" style="max-width:400px">
+          <div class="modal-head"><h3>Edit Profile</h3><button class="close-x" aria-label="Close" onclick="closeModal('admProfileMenuModal')">&times;</button></div>
+          <div class="modal-body">
+            <div class="view-menu">
+              <button type="button" onclick="closeModal('admProfileMenuModal'); document.getElementById('admPic').click()">Upload / Change Photo</button>
+              <button type="button" class="danger" id="delPicBtn"
+                      onclick="closeModal('admProfileMenuModal'); admDelPic()"
+                      aria-label="Delete profile photo">Delete Photo</button>
+              <button type="button" onclick="closeModal('admProfileMenuModal'); admSaveName()">Save Name</button>
+              <button type="button" id="admEmailBtn" onclick="closeModal('admProfileMenuModal'); admSaveEmail()">Change Email</button>
+            </div>
+            <p class="text-muted text-sm mt-3">Changes to your display name and email use the values currently typed into the fields above.</p>
+          </div>
+          <div class="modal-foot"><button class="btn btn-outline" onclick="closeModal('admProfileMenuModal')">Close</button></div>
         </div>
       </div>
 
@@ -170,7 +185,7 @@ function toggleAdminMode(){
   document.getElementById('addAdminBtn').textContent = invite ? 'Send Invitation' : 'Add Administrator';
   document.getElementById('admHint').innerHTML = invite
     ? 'An invitation email with a secure sign-in link is sent automatically. The <code>admin</code> role is granted on acceptance.'
-    : 'Creates a confirmed account immediately with the <code>admin</code> role. Share the password securely.';
+    : 'Creates a confirmed account immediately with the <code>admin</code> role, then emails the new administrator their sign-in email and the password you set here.';
 }
 
 async function addAdmin(e){
@@ -203,7 +218,13 @@ async function addAdmin(e){
   document.getElementById('an').value = '';
   document.getElementById('ae').value = '';
   document.getElementById('ap').value = '';
-  toast(invite ? `Invitation sent to ${email}.` : 'Administrator added.','success');
+  if(invite){
+    toast(`Invitation sent to ${email}.`,'success');
+  } else if(r.data && r.data.emailed === false){
+    toast('Administrator added, but the login email could not be sent. Share the credentials with them directly.','warn');
+  } else {
+    toast(`Administrator added. Their email and password were sent to ${email}.`,'success');
+  }
   await loadAdmins();
 }
 
@@ -271,9 +292,24 @@ async function verifyAdminEmailChange(email){
   }
 }
 async function admUploadPic(e){
-  const f = e.target.files[0]; if(!f) return;
+  const input = e.target;
+  const f = input.files[0];
+  // reset so re-selecting the same file re-triggers change
+  try { input.value = ''; } catch(_){}
+  if(!f) return;
+  if(f.size > 15*1024*1024){ toast('Image too large (max 15 MB before cropping).','error'); return; }
+  let blob;
+  try {
+    blob = await window.openImageCropper(f, {
+      aspectRatio: 1, outputSize: 512, filename: 'admin-avatar.png', mimeType: 'image/png'
+    });
+  } catch(err){
+    // user cancelled the crop dialog — silent
+    return;
+  }
+  const cropped = new File([blob], 'admin-avatar.png', { type: blob.type || 'image/png' });
   toast('Uploading…','info');
-  const r = await uploadAdminAvatar(f);
+  const r = await uploadAdminAvatar(cropped);
   if(!r.ok){ toast(r.error,'error'); return; }
   toast('Photo updated','success'); render();
 }
