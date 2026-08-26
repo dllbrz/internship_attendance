@@ -176,6 +176,66 @@ document.addEventListener('click', e => {
   }
 });
 
+/* ---------- Full-screen QR viewer ----------
+   Shared by every page that shows a QR code (dashboard, profile, etc).
+   Builds one reusable overlay lazily and reuses the image already drawn by
+   qrcode.js in `#<holderId>` — no second QR render, so it always matches
+   what is on the page. Call viewQR(holderId, downloadFilename, caption). */
+function ensureQrFullscreenModal(){
+  if(document.getElementById('qrFullscreenModal')) return;
+  const div = document.createElement('div');
+  div.id = 'qrFullscreenModal';
+  div.className = 'qr-fullscreen';
+  div.setAttribute('role','dialog');
+  div.setAttribute('aria-modal','true');
+  div.setAttribute('aria-label','QR code, full screen');
+  div.innerHTML = `
+    <button type="button" class="qr-fullscreen-close" aria-label="Close full screen QR code" onclick="closeQrFullscreen()">&times;</button>
+    <div class="qr-fullscreen-body">
+      <img id="qrFullscreenImg" alt="Your QR code, enlarged" src="">
+      <div id="qrFullscreenCaption" class="qr-fullscreen-caption"></div>
+      <div class="qr-fullscreen-actions">
+        <button type="button" class="btn btn-primary" onclick="downloadFullscreenQR()">Download QR Code</button>
+        <button type="button" class="btn btn-outline" onclick="closeQrFullscreen()">Close</button>
+      </div>
+    </div>`;
+  document.body.appendChild(div);
+  div.addEventListener('click', e => { if(e.target === div) closeQrFullscreen(); });
+}
+let _qrFullscreenFilename = 'qr-code';
+function viewQR(holderId, filename, caption){
+  const holder = document.getElementById(holderId||'qr');
+  if(!holder){ toast('QR not ready yet.','error'); return; }
+  const canvas = holder.querySelector('canvas');
+  const img = holder.querySelector('img');
+  const dataUrl = canvas ? canvas.toDataURL('image/png') : (img ? img.src : null);
+  if(!dataUrl){ toast('QR not ready yet.','error'); return; }
+  ensureQrFullscreenModal();
+  document.getElementById('qrFullscreenImg').src = dataUrl;
+  document.getElementById('qrFullscreenCaption').textContent = caption || '';
+  _qrFullscreenFilename = filename || 'qr-code';
+  const modal = document.getElementById('qrFullscreenModal');
+  modal.classList.add('open');
+  document.body.style.overflow = 'hidden';
+  const closeBtn = modal.querySelector('.qr-fullscreen-close');
+  if(closeBtn) setTimeout(()=>closeBtn.focus(), 30);
+}
+function closeQrFullscreen(){
+  const el = document.getElementById('qrFullscreenModal');
+  if(!el) return;
+  el.classList.remove('open');
+  if(!document.querySelector('.modal.open')) document.body.style.overflow = '';
+}
+function downloadFullscreenQR(){
+  const img = document.getElementById('qrFullscreenImg');
+  if(!img || !img.src) return;
+  const a = document.createElement('a');
+  a.href = img.src; a.download = (_qrFullscreenFilename||'qr-code')+'.png';
+  document.body.appendChild(a); a.click(); a.remove();
+  toast('QR code downloaded.','success');
+}
+document.addEventListener('keydown', e => { if(e.key === 'Escape') closeQrFullscreen(); });
+
 function exportCSV(filename, rows){
   const csv = rows.map(r=>r.map(c=>{
     const s=String(c==null?'':c);
