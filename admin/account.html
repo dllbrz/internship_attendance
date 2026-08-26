@@ -90,24 +90,7 @@ async function render(){
             <div class="form-group"><label for="ae">Email</label>
               <input class="form-control" type="email" id="ae" required placeholder="name@naic.gov.ph"></div>
 
-            <fieldset style="border:0;padding:0;margin:0 0 10px">
-              <legend class="text-sm" style="font-weight:600;color:var(--blue-900);margin-bottom:6px">How should they get access?</legend>
-              <label style="display:flex;gap:8px;align-items:flex-start;margin-bottom:6px;cursor:pointer">
-                <input type="radio" name="admMode" value="invite" checked onchange="toggleAdminMode()" style="margin-top:3px">
-                <span class="text-sm">Send an email invitation link <span class="text-muted">(recommended — they set their own password)</span></span>
-              </label>
-              <label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer">
-                <input type="radio" name="admMode" value="password" onchange="toggleAdminMode()" style="margin-top:3px">
-                <span class="text-sm">Set a temporary password myself</span>
-              </label>
-            </fieldset>
-
-            <div class="form-group" id="pwWrap" style="display:none">
-              <label for="ap">Temporary Password</label>
-              <input class="form-control" type="password" id="ap" minlength="8" autocomplete="new-password">
-            </div>
-
-            <p class="text-muted text-sm" id="admHint">An invitation email with a secure sign-in link is sent automatically. The <code>admin</code> role is granted on acceptance.</p>
+            <p class="text-muted text-sm" id="admHint">An invitation email with a secure sign-in link is sent automatically. The new administrator sets their own password when they accept. The <code>admin</code> role is granted on acceptance — invited admins are never added as interns.</p>
             <button class="btn btn-yellow" id="addAdminBtn">Send Invitation</button>
           </form>
         </div>
@@ -122,7 +105,6 @@ async function render(){
       </div>
     </main>`;
   startClock('#clockBox');
-  toggleAdminMode();
   await loadAdmins();
 }
 
@@ -174,57 +156,28 @@ async function chPass(e){
   toast('Password changed','success');
 }
 
-function adminMode(){
-  const el = document.querySelector('input[name="admMode"]:checked');
-  return el ? el.value : 'invite';
-}
-function toggleAdminMode(){
-  const invite = adminMode() === 'invite';
-  document.getElementById('pwWrap').style.display = invite ? 'none' : '';
-  document.getElementById('ap').required = !invite;
-  document.getElementById('addAdminBtn').textContent = invite ? 'Send Invitation' : 'Add Administrator';
-  document.getElementById('admHint').innerHTML = invite
-    ? 'An invitation email with a secure sign-in link is sent automatically. The <code>admin</code> role is granted on acceptance.'
-    : 'Creates a confirmed account immediately with the <code>admin</code> role, then emails the new administrator their sign-in email and the password you set here.';
-}
-
 async function addAdmin(e){
   e.preventDefault();
   const name  = document.getElementById('an').value.trim();
   const email = document.getElementById('ae').value.trim();
-  const pw    = document.getElementById('ap').value;
-  const invite = adminMode() === 'invite';
-
-  if(!invite && pw.length < 8){ toast('Password must be at least 8 characters.','error'); return; }
 
   const ok = await confirmDialog({
-    title: invite ? 'Send admin invitation' : 'Add administrator',
-    message: invite
-      ? `Send an invitation link to ${email}? They will be able to sign in as an administrator.`
-      : `Create an administrator account for ${email}?`,
-    confirmText: invite ? 'Send Invitation' : 'Add Administrator'
+    title: 'Send admin invitation',
+    message: `Send an invitation link to ${email}? They will be able to sign in as an administrator.`,
+    confirmText: 'Send Invitation'
   });
   if(!ok) return;
 
   const btn = document.getElementById('addAdminBtn');
   const label = btn.textContent;
-  btn.disabled = true; btn.textContent = invite ? 'Sending…' : 'Adding…';
-  const r = invite
-    ? await inviteAdmin(email, name)
-    : await adminManage('create', { full_name:name, email, password:pw });
+  btn.disabled = true; btn.textContent = 'Sending…';
+  const r = await inviteAdmin(email, name);
   btn.disabled = false; btn.textContent = label;
   if(!r.ok){ toast(r.error,'error'); return; }
 
   document.getElementById('an').value = '';
   document.getElementById('ae').value = '';
-  document.getElementById('ap').value = '';
-  if(invite){
-    toast(`Invitation sent to ${email}.`,'success');
-  } else if(r.data && r.data.emailed === false){
-    toast('Administrator added, but the login email could not be sent. Share the credentials with them directly.','warn');
-  } else {
-    toast(`Administrator added. Their email and password were sent to ${email}.`,'success');
-  }
+  toast(`Invitation sent to ${email}.`,'success');
   await loadAdmins();
 }
 
