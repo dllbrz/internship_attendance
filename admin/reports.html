@@ -12,6 +12,7 @@
 <script src="../js/supabase-config.js"></script>
 <script src="../js/data.js"></script>
 <script src="../js/app.js"></script>
+<script src="../js/session-guard.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.1/jspdf.plugin.autotable.min.js"></script>
 <script>
@@ -60,8 +61,6 @@ async function render(){
           <button class="btn btn-outline" onclick="resetFilters()">Reset</button>
         </div>
       </div>
-
-      <div class="stat-grid" id="stats"></div>
 
       <div class="card">
         <div class="card-head">
@@ -121,14 +120,6 @@ function resetFilters(){
 
 function applyFilters(){
   const list = filteredRecords();
-  const present = list.filter(r=>r.status==='present').length;
-  const late = list.filter(r=>r.status==='late').length;
-  const absent = list.filter(r=>r.status==='absent').length;
-
-  document.getElementById('stats').innerHTML = `
-    <div class="stat-card green"><div><div class="stat-label">Present</div><div class="stat-value">${present}</div></div><div class="stat-icon">${STAT_ICONS.present}</div></div>
-    <div class="stat-card yellow"><div><div class="stat-label">Late</div><div class="stat-value">${late}</div></div><div class="stat-icon">${STAT_ICONS.late}</div></div>
-    <div class="stat-card red"><div><div class="stat-label">Absent</div><div class="stat-value">${absent}</div></div><div class="stat-icon">${STAT_ICONS.absent}</div></div>`;
 
   // Uses the same status logic as every other screen (attendance, dashboard,
   // time card) so a Holiday or Suspension day keeps its exact label here too,
