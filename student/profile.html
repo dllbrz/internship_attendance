@@ -12,6 +12,7 @@
 <script src="../js/supabase-config.js"></script>
 <script src="../js/data.js"></script>
 <script src="../js/app.js"></script>
+<script src="../js/session-guard.js"></script>
 <script src="../js/image-crop.js"></script>
 <script src="https://cdn.jsdelivr.net/gh/davidshimjs/qrcodejs/qrcode.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -343,7 +344,8 @@ function generateTimeCard(){
   // once per page and reuse the same returned Y as every page's table margin.
   function drawHeader(){
     doc.setFillColor(10,31,68); doc.rect(0,0,W,46,'F');
-    doc.setTextColor(253,194,43); doc.setFontSize(10.5); doc.text('OFFICIAL TIME CARD', M, 19);
+    doc.setTextColor(253,194,43); doc.setFontSize(10.5);
+    doc.setFont(undefined,'bold'); doc.text('Intern Time Card', M, 19); doc.setFont(undefined,'normal');
     doc.setTextColor(255,255,255); doc.setFontSize(6.8);
     doc.text('Municipal Engineering Office', M, 30);
     doc.text('OJT Program', M, 39);
