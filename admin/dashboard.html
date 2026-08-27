@@ -12,6 +12,7 @@
 <script src="../js/supabase-config.js"></script>
 <script src="../js/data.js"></script>
 <script src="../js/app.js"></script>
+<script src="../js/session-guard.js"></script>
 <script>
 (async()=>{
 const admin = await requireAdmin();
@@ -28,7 +29,6 @@ if(admin){
     <main class="main">
       ${renderTopbar('Welcome back, '+admin.name.split(' ')[0],'Overview of interns and attendance.')}
       <div class="stat-grid">
-        <div class="stat-card"><div><div class="stat-label">Total OJT Interns</div><div class="stat-value">${activeStudents.length}</div><div class="stat-meta">Active accounts</div></div><div class="stat-icon">${STAT_ICONS.total}</div></div>
         <div class="stat-card green"><div><div class="stat-label">Present Today</div><div class="stat-value">${present}</div></div><div class="stat-icon">${STAT_ICONS.present}</div></div>
         <div class="stat-card yellow"><div><div class="stat-label">Late Today</div><div class="stat-value">${late}</div></div><div class="stat-icon">${STAT_ICONS.late}</div></div>
         <div class="stat-card red"><div><div class="stat-label">Absent Today</div><div class="stat-value">${absent}</div></div><div class="stat-icon">${STAT_ICONS.absent}</div></div>
