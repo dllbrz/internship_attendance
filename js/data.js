@@ -559,6 +559,9 @@ async function logout(opts){
   }
   try { await sb.auth.signOut(); } catch(e){}
   _resetNavDepth();
+  // Logout already asked its own confirmation above — don't let the
+  // session-guard's beforeunload prompt fire a second time on top of it.
+  if(typeof window.__markIntentionalLeave === 'function') window.__markIntentionalLeave();
   window.location.href = _isInSubfolder() ? '../index.html' : 'index.html';
 }
 
@@ -591,6 +594,9 @@ async function requireStudent(){
   }
   if(!window.__DB__.session || window.__DB__.session.type!=='student'){
     const target = _isInSubfolder() ? '../login-student.html' : 'login-student.html';
+    // Not actually signed in yet (or session expired) — nothing to lose by
+    // leaving, so skip the "leave this page?" prompt for this redirect.
+    if(typeof window.__markIntentionalLeave === 'function') window.__markIntentionalLeave();
     window.location.href = target;
     return null;
   }
@@ -605,6 +611,7 @@ async function requireAdmin(){
     return null;
   }
   if(!window.__DB__.session || window.__DB__.session.type!=='admin'){
+    if(typeof window.__markIntentionalLeave === 'function') window.__markIntentionalLeave();
     window.location.href = _isInSubfolder() ? '../login-admin.html' : 'login-admin.html';
     return null;
   }
