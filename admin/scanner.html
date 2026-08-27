@@ -12,6 +12,7 @@
 <script src="../js/supabase-config.js"></script>
 <script src="../js/data.js"></script>
 <script src="../js/app.js"></script>
+<script src="../js/session-guard.js"></script>
 <script>
 // ---- Resilient loader for the html5-qrcode library ----------------------
 // A single hard-coded CDN tag fails silently when that CDN is blocked/offline,
@@ -115,6 +116,13 @@ async function render(){
   await checkPermission();
   // Warm up the QR library in the background (non-blocking).
   ensureQrLib().catch(e => setPermBanner(e.message, 'error'));
+  // Camera must be ready to scan without any extra tap — start it the moment
+  // the page loads. The very first time a browser/user visits, the OS/browser
+  // still shows its own one-time permission prompt (this can't be skipped by
+  // any website); every time after that — and always inside the Appilix app,
+  // once the app has OS camera permission — this starts silently with no
+  // prompt at all.
+  requestAndStart();
 }
 
 async function saveSchedule(){
@@ -386,14 +394,44 @@ async function stopCamera(){
   } catch(_){}
 }
 
+// Same-QR cooldown: once an intern's QR has been scanned, that SAME QR
+// cannot be scanned again for 60 minutes — other interns can still be
+// scanned normally in the meantime. Checked first against today's actual
+// attendance record (so the cooldown holds even across page reloads or a
+// different device), with an in-memory map as a same-session backstop.
+const QR_COOLDOWN_MS = 60 * 60 * 1000; // 60 minutes
+const _lastScanByIntern = new Map(); // studentId -> Date.now() of last accepted scan
+
+function qrCooldownMinutesLeft(studentId){
+  const rec = getTodayAttendance(studentId);
+  if(rec && rec.time_in && !rec.time_out){
+    const elapsed = minutesOf(nowTime()) - minutesOf(rec.time_in);
+    if(elapsed < 60) return 60 - elapsed;
+  }
+  const last = _lastScanByIntern.get(studentId);
+  if(last){
+    const elapsedMs = Date.now() - last;
+    if(elapsedMs < QR_COOLDOWN_MS) return Math.ceil((QR_COOLDOWN_MS - elapsedMs) / 60000);
+  }
+  return 0;
+}
+
 async function onScan(text){
   const now = Date.now();
   if(now - lastScannedAt < 1500) return;
   lastScannedAt = now;
   const st = resolveQR(text);
   if(!st){ toast('Unknown QR code','error'); return; }
+
+  const waitMins = qrCooldownMinutesLeft(st.id);
+  if(waitMins > 0){
+    toast(`${st.name}'s QR was already scanned. Please wait ${waitMins} more minute(s) before scanning it again.`,'error');
+    return;
+  }
+
   const r = await scanAttendance(st.id);
   if(!r.ok){ toast(r.error,'error'); return; }
+  _lastScanByIntern.set(st.id, Date.now());
   if(r.already){
     toast(`${st.name} already timed out at ${fmt12(r.time)}.`,'info');
   } else if(r.kind === 'out'){
